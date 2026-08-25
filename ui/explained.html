@@ -1,0 +1,611 @@
+<title>Little Brains, Explained</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#14181d; --panel:#1d242c; --panel2:#232b35; --line:#2e3945;
+    --ink:#dfe6ec; --muted:#8b98a5; --faint:#5a6673;
+    --brain:#ff7a59; --slow:#5bc0eb; --good:#7ae582; --amber:#ffd166;
+    --plain:#9aa5b1;
+    --sans:'IBM Plex Sans',system-ui,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+       font-size:16px;line-height:1.65}
+  .wrap{max-width:820px;margin:0 auto;padding:48px 22px 90px}
+  h1{font-size:44px;font-weight:600;line-height:1.1;text-wrap:balance}
+  h2{font-size:26px;font-weight:600;margin:0 0 14px;text-wrap:balance}
+  h3{font-size:18px;font-weight:600;margin:0 0 8px}
+  p{margin:0 0 14px;max-width:68ch}
+  section{margin-top:64px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+           text-transform:uppercase;color:var(--brain);margin-bottom:10px}
+  .eyebrow.blue{color:var(--slow)}
+  .lede{font-size:19px;color:var(--muted);max-width:60ch}
+  .tag{font-family:var(--mono);font-size:11px;color:var(--muted);
+       border:1px solid var(--line);border-radius:4px;padding:3px 9px;
+       display:inline-block;margin:4px 6px 0 0}
+  code,pre{font-family:var(--mono)}
+  pre.block{background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:16px 18px;font-size:14px;line-height:1.7;
+    overflow-x:auto;margin:18px 0}
+  pre.block .c{color:var(--faint)} pre.block .hl{color:var(--brain)}
+  figure{margin:26px 0;background:var(--panel);border:1px solid var(--line);
+         border-radius:10px;padding:20px 18px 12px;overflow-x:auto}
+  figure svg{max-width:100%;height:auto;display:block;margin:0 auto;
+             color:var(--ink)}
+  figcaption{font-family:var(--mono);font-size:12px;color:var(--muted);
+             margin-top:12px;line-height:1.6;max-width:75ch}
+  table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14.5px;
+        display:block;overflow-x:auto}
+  table tbody{display:table;width:100%}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+     text-transform:uppercase;color:var(--muted);font-weight:500}
+  td b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}
+  @media (max-width:640px){.grid2{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:18px 20px}
+  .card h3{display:flex;gap:8px;align-items:center}
+  ul.clean{margin:0 0 14px;padding-left:0;list-style:none}
+  ul.clean li{padding:5px 0 5px 26px;position:relative}
+  ul.clean li::before{content:'';position:absolute;left:2px;top:13px;width:12px;
+    height:3px;border-radius:2px;background:var(--brain)}
+  ul.clean.blue li::before{background:var(--slow)}
+  ul.clean.gray li::before{background:var(--faint)}
+  .contract{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}
+  @media (max-width:640px){.contract{grid-template-columns:1fr}}
+  .contract div{background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:12px 14px;font-size:14px}
+  .contract div b{color:var(--good);font-family:var(--mono);font-size:12px;
+    display:block;margin-bottom:3px;letter-spacing:.05em}
+  .quote{border-left:3px solid var(--brain);padding:6px 0 6px 18px;margin:22px 0;
+    font-size:18px;color:var(--ink);max-width:62ch}
+  a{color:var(--slow)}
+  .foot{margin-top:70px;padding-top:22px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:12px;color:var(--faint)}
+</style>
+
+<div class="wrap">
+
+<div class="eyebrow">Little Brains</div>
+<h1>Your controller, plus a cerebellum, in three lines</h1>
+<p class="lede" style="margin-top:14px">A tiny drop-in learning module for
+ordinary code. It watches the part of your system that already works, learns
+the errors that part keeps having to fix, and quietly starts fixing them in
+advance. No training phase, no GPU, no tuning — and provably silent until it
+has earned the right to act.</p>
+
+<pre class="block">u  = controller.step(error)        <span class="c">// whatever you already have</span>
+<span class="hl">u += brain.step(ctx, u)            // the entire integration</span>
+apply(u)</pre>
+
+<span class="tag">~150 lines, no dependencies</span>
+<span class="tag">3.6 µs per step</span>
+<span class="tag">~4 KB RAM</span>
+<span class="tag">never worse than without it</span>
+
+<!-- ============================ PART I ============================ -->
+<section>
+<div class="eyebrow">Part I · How it works</div>
+<h2>It bolts onto the side of a loop you already have</h2>
+<p>Almost every machine is a loop: measure, compare to what you wanted, push
+back against the difference. A thermostat, a PID on a robot joint, a line
+follower — all reflexes. Reflexes are honest but dumb: they only act
+<em>after</em> the error appears, and they make the same correction every lap,
+forever, without ever noticing the pattern.</p>
+<p>The brain sits beside that loop. It never replaces your controller and it
+never learns your goal — it only sees what the loop can already observe
+(the <b>context</b>) and a number saying how things are going (the
+<b>teacher</b>). Its output is added to your controller's output. That's the
+whole surgery.</p>
+
+<figure>
+<svg viewBox="0 0 880 300" role="img" aria-label="Block diagram: the brain taps the existing control loop's observations and adds its correction to the controller output">
+  <defs>
+    <marker id="a1" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <polygon points="0,0 9,4 0,8" fill="currentColor"/></marker>
+    <marker id="a2" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <polygon points="0,0 9,4 0,8" fill="#ff7a59"/></marker>
+  </defs>
+  <g font-family="IBM Plex Mono" font-size="12" fill="currentColor">
+    <!-- controller box -->
+    <rect x="60" y="60" width="180" height="58" rx="8" fill="none" stroke="currentColor"/>
+    <text x="150" y="84" text-anchor="middle">your controller</text>
+    <text x="150" y="102" text-anchor="middle" fill="#8b98a5">(PID, heuristic…)</text>
+    <!-- plant box -->
+    <rect x="560" y="60" width="180" height="58" rx="8" fill="none" stroke="currentColor"/>
+    <text x="650" y="84" text-anchor="middle">your machine</text>
+    <text x="650" y="102" text-anchor="middle" fill="#8b98a5">(arm, car, oven…)</text>
+    <!-- u arrow with junction -->
+    <line x1="240" y1="89" x2="390" y2="89" stroke="currentColor" stroke-width="1.5"/>
+    <circle cx="400" cy="89" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="400" y="93.5" text-anchor="middle">+</text>
+    <line x1="409" y1="89" x2="553" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+    <text x="310" y="78" text-anchor="middle">action u</text>
+    <!-- feedback: sensors back to controller -->
+    <path d="M 650 118 L 650 190 L 150 190 L 150 125" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+    <text x="400" y="182" text-anchor="middle">sensors: how did that go?</text>
+    <!-- brain box -->
+    <rect x="330" y="222" width="220" height="56" rx="8" fill="none" stroke="#ff7a59" stroke-width="1.8"/>
+    <text x="440" y="246" text-anchor="middle" fill="#ff7a59">the little brain</text>
+    <text x="440" y="264" text-anchor="middle" fill="#8b98a5">learns while it runs</text>
+    <!-- ctx tap -->
+    <path d="M 300 190 L 300 236 L 322 236" fill="none" stroke="#5bc0eb" stroke-width="1.5" marker-end="url(#a1)"/>
+    <text x="236" y="228" fill="#5bc0eb">context: what</text>
+    <text x="236" y="243" fill="#5bc0eb">it can observe</text>
+    <!-- teacher tap from u -->
+    <path d="M 268 89 L 268 152 L 358 152 L 358 214" fill="none" stroke="#ffd166" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a1)"/>
+    <text x="378" y="146" fill="#ffd166">teacher: what the reflex</text>
+    <text x="378" y="161" fill="#ffd166">had to do just now</text>
+    <!-- brain output to junction -->
+    <path d="M 440 222 L 440 130 L 403 100" fill="none" stroke="#ff7a59" stroke-width="1.8" marker-end="url(#a2)"/>
+    <text x="452" y="132" fill="#ff7a59">+ learned correction</text>
+  </g>
+</svg>
+<figcaption>The whole integration. The brain taps two things the loop already
+produces — observations and the controller's own output — and adds its
+correction at one junction. Remove the coral box and your system is exactly
+what it was before.</figcaption>
+</figure>
+</section>
+
+<section>
+<h2>This is not that kind of neural network</h2>
+<p>When people hear "it learns," they picture deep learning: many layers,
+millions of weights, all of them trained by backpropagation, on a GPU, in a
+separate training phase, on collected data. This is a different animal —
+older, smaller, and better suited to living inside a running machine.</p>
+
+<figure>
+<svg viewBox="0 0 880 330" role="img" aria-label="Comparison: a deep network trains every layer by backpropagation; the little brain trains only one thin readout over a frozen random layer">
+  <defs>
+    <marker id="b1" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <polygon points="0,0 9,4 0,8" fill="currentColor"/></marker>
+    <marker id="b2" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <polygon points="0,0 9,4 0,8" fill="#ff7a59"/></marker>
+  </defs>
+  <g font-family="IBM Plex Mono" font-size="12" fill="currentColor">
+    <text x="220" y="26" text-anchor="middle" font-size="13">a deep network</text>
+    <text x="660" y="26" text-anchor="middle" font-size="13">a little brain</text>
+    <!-- deep net: stacked trainable layers -->
+    <g stroke="#ff7a59" fill="none">
+      <rect x="120" y="48"  width="200" height="34" rx="6"/>
+      <rect x="120" y="96"  width="200" height="34" rx="6"/>
+      <rect x="120" y="144" width="200" height="34" rx="6"/>
+      <rect x="120" y="192" width="200" height="34" rx="6"/>
+    </g>
+    <text x="220" y="69"  text-anchor="middle" fill="#ff7a59">layer — trains</text>
+    <text x="220" y="117" text-anchor="middle" fill="#ff7a59">layer — trains</text>
+    <text x="220" y="165" text-anchor="middle" fill="#ff7a59">layer — trains</text>
+    <text x="220" y="213" text-anchor="middle" fill="#ff7a59">layer — trains</text>
+    <path d="M 348 226 C 380 160 380 110 348 52" fill="none" stroke="#ff7a59" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#b2)"/>
+    <text x="392" y="128">backprop</text>
+    <text x="392" y="144">through every</text>
+    <text x="392" y="160">layer</text>
+    <text x="220" y="262" text-anchor="middle" fill="#8b98a5">train phase ≠ run phase</text>
+    <text x="220" y="280" text-anchor="middle" fill="#8b98a5">batches, gradients, GPU</text>
+    <!-- little brain: frozen layer + readout -->
+    <rect x="560" y="96" width="200" height="82" rx="6" fill="none" stroke="#5a6673" stroke-dasharray="6 4"/>
+    <text x="660" y="126" text-anchor="middle" fill="#8b98a5">random feature cells</text>
+    <text x="660" y="144" text-anchor="middle" fill="#8b98a5">wired once, FROZEN</text>
+    <text x="660" y="162" text-anchor="middle" fill="#8b98a5">4 inputs each, ~5% active</text>
+    <line x1="660" y1="52" x2="660" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#b1)"/>
+    <text x="660" y="44" text-anchor="middle">context in</text>
+    <line x1="660" y1="178" x2="660" y2="222" stroke="#ff7a59" stroke-width="2.4" marker-end="url(#b2)"/>
+    <text x="676" y="204" fill="#ff7a59">one thin readout —</text>
+    <text x="676" y="220" fill="#ff7a59">the ONLY thing that learns</text>
+    <text x="660" y="262" text-anchor="middle" fill="#8b98a5">learns while running, in place</text>
+    <text x="660" y="280" text-anchor="middle" fill="#8b98a5">no gradients stored, no batches</text>
+    <text x="660" y="298" text-anchor="middle" fill="#8b98a5">convex: one best answer, provably found</text>
+  </g>
+</svg>
+<figcaption>The amount of coral is the point. A deep net's power comes from
+training everything, which costs data, compute and opacity. The little brain
+freezes a random scatter of feature cells and trains only the last inch — a
+1960s trick (adaptive filters) that is cheap, stable, and mathematically
+guaranteed to settle.</figcaption>
+</figure>
+
+<table>
+<tr><th></th><th>deep network</th><th>little brain</th></tr>
+<tr><td>learns</td><td>everything, in layers</td><td><b>one readout</b> over fixed features</td></tr>
+<tr><td>when</td><td>separate training phase</td><td><b>while running</b>, every tick</td></tr>
+<tr><td>how</td><td>backpropagation</td><td><b>running correlation</b> (LMS, 1960)</td></tr>
+<tr><td>hardware</td><td>GPU</td><td><b>microcontroller</b> (3.6 µs/step)</td></tr>
+<tr><td>memory</td><td>GB</td><td><b>~4 KB</b>, constant</td></tr>
+<tr><td>failure mode</td><td>silent weirdness</td><td><b>watchdog withdraws it</b></td></tr>
+<tr><td>can invent strategy</td><td>sometimes</td><td><b>no — by design</b></td></tr>
+</table>
+</section>
+
+<section>
+<h2>The wiring is stolen from your cerebellum</h2>
+<p>Your cortex deliberates. Your <em>cerebellum</em> — the "little brain" at
+the back of your skull, holding more than half your neurons — does something
+much narrower: it learns to predict and cancel the errors of your body's
+reflexes. It's why you can touch your nose with your eyes closed, and why the
+tenth sip from a new coffee mug doesn't spill like the first. This module is
+that circuit, transliterated:</p>
+
+<figure>
+<svg viewBox="0 0 880 240" role="img" aria-label="The cerebellar circuit mapped to the module: sensors to granule cells to readout to output, with the error arriving on a separate teaching line">
+  <defs>
+    <marker id="c1" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <polygon points="0,0 9,4 0,8" fill="currentColor"/></marker>
+    <marker id="c2" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <polygon points="0,0 9,4 0,8" fill="#ffd166"/></marker>
+  </defs>
+  <g font-family="IBM Plex Mono" font-size="12" fill="currentColor">
+    <!-- mossy fibres -->
+    <text x="80" y="60" text-anchor="middle" font-size="13">mossy fibres</text>
+    <text x="80" y="78" text-anchor="middle" fill="#8b98a5">your sensors</text>
+    <line x1="140" y1="66" x2="196" y2="66" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+    <!-- granule cells -->
+    <g fill="#5a6673">
+      <circle cx="230" cy="42" r="5"/><circle cx="256" cy="60" r="5"/>
+      <circle cx="226" cy="82" r="5"/><circle cx="252" cy="100" r="5"/>
+      <circle cx="282" cy="44" r="5"/><circle cx="284" cy="86" r="5"/>
+    </g>
+    <circle cx="258" cy="70" r="52" fill="none" stroke="#5a6673" stroke-dasharray="5 4"/>
+    <text x="258" y="146" text-anchor="middle" font-size="13">granule cells</text>
+    <text x="258" y="164" text-anchor="middle" fill="#8b98a5">random feature cells</text>
+    <text x="258" y="182" text-anchor="middle" fill="#8b98a5">~4 inputs each</text>
+    <!-- golgi loop -->
+    <path d="M 258 18 C 300 -6 336 16 310 40" fill="none" stroke="#5bc0eb" stroke-width="1.5" marker-end="url(#c1)"/>
+    <text x="356" y="16" fill="#5bc0eb">Golgi cell: hushes the crowd,</text>
+    <text x="356" y="32" fill="#5bc0eb">only ~5% may speak (sparsity)</text>
+    <!-- parallel fibres to purkinje -->
+    <line x1="312" y1="70" x2="420" y2="70" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+    <text x="366" y="60" text-anchor="middle" fill="#8b98a5">parallel fibres</text>
+    <!-- purkinje -->
+    <rect x="426" y="42" width="170" height="56" rx="8" fill="none" stroke="#ff7a59" stroke-width="1.8"/>
+    <text x="511" y="66" text-anchor="middle" fill="#ff7a59">Purkinje cell</text>
+    <text x="511" y="84" text-anchor="middle" fill="#8b98a5">the learned readout</text>
+    <!-- climbing fibre -->
+    <path d="M 511 178 L 511 106" fill="none" stroke="#ffd166" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#c2)"/>
+    <text x="524" y="150" fill="#ffd166">climbing fibre:</text>
+    <text x="524" y="166" fill="#ffd166">the teaching signal</text>
+    <!-- nuclei -->
+    <line x1="596" y1="70" x2="668" y2="70" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+    <rect x="674" y="42" width="150" height="56" rx="8" fill="none" stroke="#5bc0eb" stroke-width="1.8"/>
+    <text x="749" y="66" text-anchor="middle" fill="#5bc0eb">deep nuclei</text>
+    <text x="749" y="84" text-anchor="middle" fill="#8b98a5">slow memory · output</text>
+    <line x1="749" y1="98" x2="749" y2="130" stroke="#5bc0eb" stroke-width="1.8" marker-end="url(#c1)"/>
+    <text x="749" y="148" text-anchor="middle" fill="#5bc0eb">correction out</text>
+  </g>
+</svg>
+<figcaption>Every block exists in the code under the same role: sensors fan
+out onto a large scatter of randomly-wired cells; an inhibitory loop keeps
+only a few percent active at once; one readout learns from a dedicated error
+line; a slower second store consolidates what proves stable.</figcaption>
+</figure>
+
+<p>Why copy this and not the cortex? Because the cerebellum's job description
+matches the engineering ask exactly: <em>fast, cheap, always-on error
+prediction bolted beside an existing reflex</em> — and it does it with a
+circuit simple enough that we can prove things about the copy.</p>
+</section>
+
+<section>
+<h2>How it actively learns: it watches your reflexes work</h2>
+<p>The cleverest part isn't in the brain — it's in what we feed it. The best
+teaching signal turns out to be <b>your controller's own output</b>. Think of
+what that number means: it is, by definition, exactly what had to be done that
+your automation didn't see coming. So the brain's homework, every tick, is:
+<em>"given what I could observe a moment ago, predict what the reflex is having
+to do right now."</em> Once it predicts well, its prediction gets added to the
+action — arriving <em>before</em> the error instead of after. The reflex
+finds less and less left to fix. Authorship of the behaviour transfers.</p>
+
+<figure>
+<svg viewBox="0 0 880 240" role="img" aria-label="Over time the controller's corrective effort falls while the brain's feedforward rises; total action stays the same but arrives earlier">
+  <g font-family="IBM Plex Mono" font-size="12" fill="currentColor">
+    <line x1="70" y1="180" x2="820" y2="180" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="70" y1="180" x2="70" y2="40" stroke="currentColor" stroke-width="1.2"/>
+    <text x="820" y="200" text-anchor="end">time running →</text>
+    <text x="60" y="46" text-anchor="end" transform="rotate(-90 60 46)"></text>
+    <text x="74" y="34">who is doing the work</text>
+    <!-- reflex effort decaying -->
+    <path d="M 70 62 C 240 66 320 100 450 140 C 560 172 700 172 820 172"
+          fill="none" stroke="#9aa5b1" stroke-width="2.2"/>
+    <text x="150" y="56" fill="#9aa5b1">your controller, reacting late</text>
+    <!-- brain rising -->
+    <path d="M 70 176 C 240 172 320 138 450 96 C 560 66 700 62 820 60"
+          fill="none" stroke="#ff7a59" stroke-width="2.2"/>
+    <text x="606" y="52" fill="#ff7a59">the brain, acting early</text>
+    <!-- annotation -->
+    <line x1="450" y1="96" x2="450" y2="140" stroke="#5a6673" stroke-dasharray="4 4"/>
+    <text x="462" y="122" fill="#8b98a5">same total action —</text>
+    <text x="462" y="138" fill="#8b98a5">it just arrives sooner</text>
+  </g>
+</svg>
+<figcaption>Feedback-error learning (Kawato, 1990 — a real theory of how your
+cerebellum trains). Because the brain replaces effort instead of piling on
+top of it, the loop's total "stiffness" stays constant while it learns —
+which is why this doesn't destabilise the system it's helping.</figcaption>
+</figure>
+
+<p>This also explains what it can and can't do. It cancels everything
+<em>predictable</em>: gravity sag, a bent wheel, a periodic vibration, a
+payload's weight, a track's curvature. It cannot cancel true surprises —
+and it doesn't try.</p>
+</section>
+
+<section>
+<h2>How it knows it's helping: confidence is earned, not assumed</h2>
+<p>A learner that acts while ignorant makes things worse — we measured it, and
+it's ugly. So the output passes through a <b>competence gate</b>. The brain
+studies silently at first: full learning, zero output. It watches the
+correlation between what it <em>would have said</em> and what the reflex
+actually did. Only when its predictions demonstrably match reality does the
+gate open, gradually. And it keeps a grudge-free tripwire forever after:</p>
+
+<figure>
+<svg viewBox="0 0 960 250" role="img" aria-label="The confidence gate: silent study, earned ramp-up, hold on success, and automatic withdrawal if the system becomes worse than it was before the brain engaged">
+  <defs>
+    <marker id="d2" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <polygon points="0,0 9,4 0,8" fill="#ff7a59"/></marker>
+  </defs>
+  <g font-family="IBM Plex Mono" font-size="12" fill="currentColor">
+    <line x1="70" y1="190" x2="820" y2="190" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="70" y1="190" x2="70" y2="40" stroke="currentColor" stroke-width="1.2"/>
+    <text x="74" y="34">how much output is allowed (0 → 100%)</text>
+    <text x="820" y="210" text-anchor="end">time →</text>
+    <!-- alpha curve -->
+    <path d="M 70 188 L 250 188 C 330 188 350 70 450 62 L 640 62"
+          fill="none" stroke="#ff7a59" stroke-width="2.4"/>
+    <!-- retreat dashed branch -->
+    <path d="M 640 62 C 680 62 700 170 730 184" fill="none" stroke="#ff7a59"
+          stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#d2)"/>
+    <!-- phase labels -->
+    <text x="160" y="172" text-anchor="middle" fill="#8b98a5">studies silently</text>
+    <text x="160" y="188" text-anchor="middle" fill="#8b98a5">(output held at zero)</text>
+    <text x="352" y="120" fill="#8b98a5">predictions start</text>
+    <text x="352" y="136" fill="#8b98a5">matching → allowed in</text>
+    <text x="545" y="48" text-anchor="middle" fill="#8b98a5">earned trust holds</text>
+    <text x="744" y="150" fill="#8b98a5">the tripwire: if the system</text>
+    <text x="744" y="166" fill="#8b98a5">drifts back toward its</text>
+    <text x="744" y="182" fill="#8b98a5">pre-brain error, withdraw</text>
+  </g>
+</svg>
+<figcaption>The tripwire is anchored to one honest number: how hard your
+controller was working before the brain ever engaged. "Worse than without it"
+is the only definition of harm that matters, so it's the one wired in. One
+subtlety earned the hard way: when the machine itself changes (a new payload),
+effort spikes but the brain is visibly re-learning — so skill vetoes the
+tripwire, and it stays engaged to fix it.</figcaption>
+</figure>
+
+<p>The result, measured on the pendulum and the car over long runs: the brain
+twin's worst moment during learning was statistically indistinguishable from
+its baseline. It never bought its improvement with a bad transient.</p>
+</section>
+
+<section>
+<h2>Two memories, like yours</h2>
+<p>One memory can't both adapt in seconds and remember for good — chase the
+present and you forget the past. So there are two, learning the same lesson at
+different speeds, exactly as motor memory does (it's why a skill survives a
+night's sleep even after a bad day).</p>
+
+<figure>
+<svg viewBox="0 0 880 240" role="img" aria-label="The fast memory spikes at each new disturbance and relaxes; the slow memory ratchets upward and keeps the skill">
+  <g font-family="IBM Plex Mono" font-size="12" fill="currentColor">
+    <line x1="70" y1="190" x2="820" y2="190" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="70" y1="190" x2="70" y2="40" stroke="currentColor" stroke-width="1.2"/>
+    <text x="74" y="34">how much each memory holds</text>
+    <text x="820" y="210" text-anchor="end">time →</text>
+    <!-- disturbance markers -->
+    <line x1="200" y1="190" x2="200" y2="52" stroke="#5a6673" stroke-dasharray="4 4"/>
+    <line x1="520" y1="190" x2="520" y2="52" stroke="#5a6673" stroke-dasharray="4 4"/>
+    <text x="206" y="50" fill="#8b98a5">something new happens</text>
+    <text x="526" y="50" fill="#8b98a5">it happens again</text>
+    <!-- fast: spike and relax -->
+    <path d="M 70 186 L 200 186 C 230 90 270 92 320 130 C 380 166 450 180 520 180 C 545 120 580 124 630 150 C 700 176 770 182 820 182"
+          fill="none" stroke="#ff7a59" stroke-width="2.2"/>
+    <text x="256" y="82" fill="#ff7a59">fast: the scratchpad —</text>
+    <text x="256" y="98" fill="#ff7a59">grabs it, then lets go</text>
+    <!-- slow: ratchet -->
+    <path d="M 70 188 L 200 188 C 300 184 380 150 520 142 C 620 136 730 128 820 126"
+          fill="none" stroke="#5bc0eb" stroke-width="2.2"/>
+    <text x="600" y="112" fill="#5bc0eb">slow: keeps the skill</text>
+  </g>
+</svg>
+<figcaption>The second exposure costs less — the slow store still holds most
+of the answer. Measured: 34% cheaper re-adaptation with the slow memory,
+exactly 0% without it. The fast layer deliberately leaks, so it's always
+fresh scratch space for the next surprise.</figcaption>
+</figure>
+</section>
+
+<section>
+<h2>It grows only when it must — and never from noise</h2>
+<p>The brain starts small (64 cells) and can add capacity, but "I'm still
+making errors" is <em>not</em> a reason to grow — noise makes errors too, and
+growing on noise just memorises static. Growth needs three signatures at
+once:</p>
+
+<figure>
+<svg viewBox="0 0 880 150" role="img" aria-label="Three gates before growth: learning has settled, the leftover error still has a repeating pattern, and it is big enough to matter">
+  <defs>
+    <marker id="e1" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <polygon points="0,0 9,4 0,8" fill="currentColor"/></marker>
+  </defs>
+  <g font-family="IBM Plex Mono" font-size="12" fill="currentColor">
+    <rect x="40"  y="40" width="200" height="62" rx="8" fill="none" stroke="currentColor"/>
+    <text x="140" y="66" text-anchor="middle">learning has settled?</text>
+    <text x="140" y="84" text-anchor="middle" fill="#8b98a5">weights stopped moving</text>
+    <line x1="240" y1="71" x2="288" y2="71" stroke="currentColor" stroke-width="1.5" marker-end="url(#e1)"/>
+    <text x="264" y="61" text-anchor="middle" fill="#7ae582">yes</text>
+    <rect x="292" y="40" width="220" height="62" rx="8" fill="none" stroke="currentColor"/>
+    <text x="402" y="66" text-anchor="middle">leftover error patterned?</text>
+    <text x="402" y="84" text-anchor="middle" fill="#8b98a5">repeats → signal · hiss → noise</text>
+    <line x1="512" y1="71" x2="560" y2="71" stroke="currentColor" stroke-width="1.5" marker-end="url(#e1)"/>
+    <text x="536" y="61" text-anchor="middle" fill="#7ae582">yes</text>
+    <rect x="564" y="40" width="150" height="62" rx="8" fill="none" stroke="currentColor"/>
+    <text x="639" y="66" text-anchor="middle">big enough</text>
+    <text x="639" y="84" text-anchor="middle">to matter?</text>
+    <line x1="714" y1="71" x2="762" y2="71" stroke="currentColor" stroke-width="1.5" marker-end="url(#e1)"/>
+    <text x="738" y="61" text-anchor="middle" fill="#7ae582">yes</text>
+    <text x="772" y="66" fill="#ff7a59">grow +20%,</text>
+    <text x="772" y="84" fill="#ff7a59">blank cells</text>
+    <text x="40" y="128" fill="#8b98a5">any "no" → wait. Sensor noise dies at gate two — verified.</text>
+  </g>
+</svg>
+<figcaption>In testing, a deliberately starved brain (8 cells) grew itself to
+46 and stopped on its own; a well-sized brain fed pure sensor noise never grew
+once. New cells arrive with zero influence, so growth can't cause a glitch.
+Cells that stay useless for a minute get re-rolled and recycled.</figcaption>
+</figure>
+</section>
+
+<section>
+<h2>The honest boundary</h2>
+<blockquote class="quote">The brain can only learn what its context can
+see.</blockquote>
+<p>We built a maze demo to find the edge, and found it. The brain measurably
+learned what a dead-end mouth looks like from raw wall patterns — real learned
+structure — yet barely gained, because a maze's wasted steps come from deep
+branches that <em>no local glance can predict</em>. No amount of cleverness
+conjures information that isn't in the inputs. If your problem's answer isn't
+a function of what you can observe, this module will honestly learn nothing,
+its gate will stay shut, and your system will run exactly as before. That
+failure mode — quiet, harmless, visible — is a feature we paid for.</p>
+</section>
+
+<section>
+<h2>The safety contract</h2>
+<div class="contract">
+  <div><b>ZERO AT BIRTH</b>Weights start at zero — the first output is exactly zero, always.</div>
+  <div><b>OFF = GONE</b>Learning disabled is bit-for-bit identical to your loop alone.</div>
+  <div><b>SILENT UNTIL PROVEN</b>No output until predictions demonstrably match the teacher.</div>
+  <div><b>SELF-WITHDRAWING</b>If you'd be better off without it, its own tripwire benches it.</div>
+  <div><b>BOUNDED</b>Output never exceeds half your controller's authority. Ever.</div>
+  <div><b>NO POISON</b>A NaN anywhere zeroes the fast memory and logs, instead of spreading.</div>
+</div>
+</section>
+
+<!-- ============================ PART II ============================ -->
+<section>
+<div class="eyebrow blue">Part II · The main page</div>
+<h2>What this is</h2>
+<p>A goal-blind, constant-memory, gradient-free learning sidecar for loops and
+decision points. You keep your algorithm. The brain attaches beside it,
+watches its corrections, and takes over the predictable ones — so your simple
+controller performs like a much smarter one, without you deriving anything.</p>
+
+<div class="grid2">
+  <div class="card">
+    <h3 style="color:var(--good)">It is</h3>
+    <ul class="clean">
+      <li>three lines in your existing loop</li>
+      <li>learning that happens <em>while running</em></li>
+      <li>self-tuning — constants derive from loop rate + authority</li>
+      <li>tiny: microcontroller-class CPU and RAM</li>
+      <li>guarded: never worse than what you had</li>
+      <li>inspectable: watch its cells fire, watch skill consolidate</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3 style="color:var(--brain)">It is not</h3>
+    <ul class="clean gray">
+      <li>a replacement for control theory when you need certificates</li>
+      <li>an RL agent that invents strategies</li>
+      <li>a fix for information your sensors don't carry</li>
+      <li>an LLM, or anything that needs one</li>
+      <li>a reason to skip making your baseline basically work</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<section>
+<h2>When to reach for it</h2>
+<p>The tell is a sentence you've probably said about your own project:</p>
+<ul class="clean">
+  <li>"It works, but it always sags/overshoots in the same spot."</li>
+  <li>"Every lap, same wobble. Every layer, same ripple."</li>
+  <li>"It was tuned for no payload — now everything's off."</li>
+  <li>"I'd need the full dynamics model to fix this properly, and I'm not doing that."</li>
+  <li>"It works on my bench but drifts in the field."</li>
+</ul>
+<p>Repeatable error + observable context = food. Robot arms, line followers,
+drones and planes holding a path, 3D printers, camera gimbals, thermostats
+and kilns, ship and antenna pointing, ballistics and throwing machines,
+scoring functions inside solvers — anything with a loop and a pattern.</p>
+</section>
+
+<section>
+<h2>Proven, live, in your browser</h2>
+<p>Every claim above runs in the
+<a href="https://claude.ai/code/artifact/98ac362a-9080-4535-9bf6-f9e41f060d4c">testbench</a>
+— six machines, each a twin experiment: gray runs the stock controller, coral
+runs the same controller plus the brain. One switch. Same brain, same
+constants, every demo.</p>
+<table>
+<tr><th>demo</th><th>what's broken</th><th>plain</th><th>with brain</th></tr>
+<tr><td>Balance (inverted pendulum)</td><td>weak PID + rhythmic shove</td><td><b>13.8°</b></td><td><b>6.0°</b> — 44%</td></tr>
+<tr><td>Follow path (2-joint arm)</td><td>gravity + inertia untuned</td><td><b>2.1°</b></td><td><b>1.2°</b> — 58%</td></tr>
+<tr><td>Line car</td><td>crooked wheel + crosswind</td><td><b>4.2 cm</b></td><td><b>2.0 cm</b> — 48%</td></tr>
+<tr><td>Flight (terrain following)</td><td>updrafts + bad trim</td><td><b>2.3 m</b></td><td><b>0.8 m</b> — 36%</td></tr>
+<tr><td>Launcher (episodic)</td><td>air drag + wind ignored</td><td><b>4.9 m</b></td><td><b>2.5 m</b> — 51%</td></tr>
+<tr><td>Maze (boundary exhibit)</td><td>dead ends unpredictable</td><td><b>—</b></td><td><b>~no gain</b>, by honest design</td></tr>
+</table>
+<p>The bench is also the project's immune system: <code>bench.run(id, secs)</code>
+scores any brain change against every machine at once. Improvements must beat
+the whole board.</p>
+</section>
+
+<section>
+<h2>What it costs</h2>
+<table>
+<tr><th>resource</th><th>measured</th><th>meaning</th></tr>
+<tr><td>CPU per learning step</td><td><b>3.6 µs</b> (64 cells)</td><td>0.04% of one core at 100 Hz</td></tr>
+<tr><td>CPU per read</td><td><b>1.0 µs</b></td><td>score options freely</td></tr>
+<tr><td>RAM</td><td><b>~4 KB</b> (128-cell cap)</td><td>fits an Arduino-class chip</td></tr>
+<tr><td>dependencies</td><td><b>none</b></td><td>~150 lines, ported in an afternoon</td></tr>
+<tr><td>tuning</td><td><b>zero knobs</b></td><td>constants derive from loop rate + authority</td></tr>
+</table>
+</section>
+
+<section>
+<h2>The three decisions you actually make</h2>
+<p>Not tuning — engineering, once, in plain language:</p>
+<ul class="clean blue">
+  <li><b>Teacher:</b> feed it your controller's own output — "learn what my
+      reflex keeps having to do." (For episodic tasks: the miss, converted to
+      output units, as a residual on top of what the brain already said.)</li>
+  <li><b>Context:</b> give it what the correction depends on. Position-locked
+      effects need position channels; if the brain plateaus, the cure is a
+      missing observation, not a knob.</li>
+  <li><b>Authority:</b> declare your controller's maximum output. The brain
+      confines itself to half of that, forever.</li>
+</ul>
+</section>
+
+<section>
+<h2>Where this is going</h2>
+<p>Step one of a larger idea: <em>ambient adaptation</em> — a little
+mathematical reasoning folded into ordinary code, no LLM anywhere. Today your
+program's competence is frozen at the moment you stopped tuning it. The bet
+here is that most software that touches the physical world deserves what your
+body already has: a small, cheap, trustworthy layer that notices "I keep
+making this same correction" and quietly absorbs it — so a robot arm ripens
+with use, an A* solver's cost function sharpens to its terrain, a printer
+learns its own resonances, and none of it requires the author to become a
+controls engineer or bolt on a model server.</p>
+<p>The dream shape is boring on purpose: a commodity block, the way PID itself
+became one. <code>#include "brain.h"</code>, one object, one added line, and a
+serial-printable map of cells so you can literally watch it think. Algorithms
+stop being ceilings and start being floors — everything you ship gets a
+little better every hour it runs, and provably never worse.</p>
+</section>
+
+<div class="foot">Little Brains · linear readout over a frozen random basis ·
+LMS (1960) + CMAC (Albus 1975) + feedback-error learning (Kawato 1990) +
+two-rate memory (Smith 2006), packaged with a competence gate and a testbench.
+The contribution is the packaging — and the honesty.</div>
+
+</div>

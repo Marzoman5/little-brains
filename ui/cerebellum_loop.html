@@ -1,0 +1,633 @@
+<title>Cerebellum in the Loop</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#14181d; --panel:#1d242c; --panel2:#232b35; --line:#2e3945;
+    --ink:#dfe6ec; --muted:#8b98a5; --faint:#5a6673;
+    --fast:#ff7a59; --slow:#5bc0eb; --rms:#ffd166; --good:#7ae582;
+    --sans:'IBM Plex Sans',system-ui,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+       font-size:13px;overflow:hidden}
+  .app{display:flex;flex-direction:column;height:100vh}
+
+  .bar{display:flex;align-items:center;gap:10px;padding:8px 14px;
+       background:var(--panel);border-bottom:1px solid var(--line)}
+  .bar h1{font-size:14px;font-weight:600;margin-right:4px}
+  .tag{font-family:var(--mono);font-size:10px;color:var(--muted);
+       border:1px solid var(--line);border-radius:3px;padding:2px 6px}
+  .spacer{flex:1}
+  button{font-family:var(--sans);font-size:12px;font-weight:500;color:var(--ink);
+         background:var(--panel2);border:1px solid var(--line);border-radius:4px;
+         padding:5px 12px;cursor:pointer}
+  button:hover{border-color:var(--faint)}
+  button:focus-visible,select:focus-visible{outline:2px solid var(--slow);outline-offset:1px}
+  select{font-family:var(--mono);font-size:12px;color:var(--ink);
+         background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:4px 6px}
+  .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+  .seg button{border:none;border-radius:0;padding:5px 12px;background:var(--panel2);
+              color:var(--muted)}
+  .seg button.on{background:var(--faint);color:var(--ink)}
+
+  .main{display:flex;flex:1;min-height:0}
+  .stage{flex:1;display:flex;flex-direction:column;min-width:0;padding:12px;gap:8px}
+  #pend{flex:1;min-height:0;width:100%;background:var(--panel);
+        border:1px solid var(--line);border-radius:6px}
+  .caption{font-family:var(--mono);font-size:10px;color:var(--muted);
+           letter-spacing:.06em;text-transform:uppercase}
+  #brain{width:100%;background:var(--panel);border:1px solid var(--line);
+         border-radius:6px}
+  .brainrow{display:flex;justify-content:space-between;align-items:baseline}
+
+  .rail{width:330px;flex:none;overflow-y:auto;background:var(--panel);
+        border-left:1px solid var(--line);padding:12px;display:flex;
+        flex-direction:column;gap:10px}
+
+  /* the switch */
+  .bigswitch{display:flex;align-items:center;gap:12px;background:var(--panel2);
+             border:1px solid var(--line);border-radius:8px;padding:14px;
+             cursor:pointer;user-select:none}
+  .bigswitch:focus-visible{outline:2px solid var(--slow);outline-offset:1px}
+  .track{width:56px;height:30px;border-radius:15px;background:var(--line);
+         position:relative;transition:background .15s;flex:none}
+  .knob{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;
+        background:var(--muted);transition:left .15s,background .15s}
+  .bigswitch.on .track{background:#7a3d2b}
+  .bigswitch.on .knob{left:29px;background:var(--fast)}
+  .swlabel{font-weight:600;font-size:15px}
+  .swsub{font-size:11px;color:var(--muted)}
+
+  .headline{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+            padding:10px 14px}
+  .headline .big{font-family:var(--mono);font-size:34px;font-weight:500;
+                 line-height:1.05;font-variant-numeric:tabular-nums}
+  .headline .sub{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:3px}
+
+  .panelbox{border:1px solid var(--line);border-radius:6px;padding:9px 11px 10px;
+            background:var(--panel)}
+  .panelbox h2{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--muted);
+               letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px}
+  .ctl{display:grid;grid-template-columns:80px 1fr 56px;align-items:center;
+       gap:8px;margin-bottom:6px}
+  .ctl label{color:var(--muted);font-size:12px}
+  .ctl .val{font-family:var(--mono);font-size:11px;text-align:right;
+            font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;
+      background:var(--line);border-radius:2px;outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+      width:13px;height:13px;border-radius:50%;background:var(--ink);cursor:pointer;
+      border:2px solid var(--panel)}
+  input[type=range]:focus-visible{outline:2px solid var(--slow);outline-offset:3px}
+
+  .chart{width:100%;display:block;background:var(--panel2);
+         border:1px solid var(--line);border-radius:4px;margin-bottom:6px}
+  .legend{display:flex;gap:12px;font-family:var(--mono);font-size:10px;
+          color:var(--muted);margin:0 0 6px 2px}
+  .lf{color:var(--fast)} .ls{color:var(--slow)} .lr{color:var(--rms)}
+  details{border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+  details summary{font-family:var(--mono);font-size:10px;color:var(--muted);
+                  letter-spacing:.08em;text-transform:uppercase;padding:9px 11px;
+                  cursor:pointer}
+  details .inner{padding:0 11px 10px}
+  #eventlog{font-family:var(--mono);font-size:10px;line-height:1.6;color:var(--muted);
+            background:var(--panel2);border:1px solid var(--line);border-radius:4px;
+            padding:6px 8px;height:84px;overflow-y:auto}
+  #eventlog .t{color:var(--faint)}
+  #eventlog .grow{color:var(--good)}
+</style>
+
+<div class="app">
+  <div class="bar">
+    <h1>Cerebellum in the Loop</h1>
+    <div class="seg" id="taskseg">
+      <button id="task_upright" class="on">Balance upright</button>
+      <button id="task_swing">Follow a path</button>
+    </div>
+    <span class="spacer"></span>
+    <span class="tag" id="simclock">t = 0.0 s</span>
+    <select id="speed" title="simulation speed">
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+      <option value="5">5×</option>
+      <option value="10">10×</option>
+    </select>
+    <button id="pause">Pause</button>
+    <button id="resetbrain">Reset brain</button>
+  </div>
+
+  <div class="main">
+    <div class="stage">
+      <canvas id="pend"></canvas>
+      <div class="brainrow">
+        <span class="caption">the brain — granule units · glow = firing now · blue = consolidated skill</span>
+        <span class="caption" id="braininfo">64 units</span>
+      </div>
+      <canvas id="brain" height="128"></canvas>
+    </div>
+
+    <div class="rail">
+      <div class="bigswitch" id="bigswitch" tabindex="0" role="switch" aria-checked="false">
+        <div class="track"><div class="knob"></div></div>
+        <div>
+          <div class="swlabel">Self-learning</div>
+          <div class="swsub" id="swsub">off — PID is on its own</div>
+        </div>
+      </div>
+
+      <div class="headline">
+        <div class="big" id="headline">—</div>
+        <div class="sub" id="headsub">tracking error, rad RMS (5 s window)</div>
+      </div>
+
+      <div class="panelbox">
+        <h2>Tracking error</h2>
+        <canvas class="chart" id="rmschart" height="96"></canvas>
+        <div class="legend"><span class="lr">— rms</span><span>- - PID alone (baseline)</span></div>
+        <div class="legend" style="margin-bottom:0"><span class="lf">— fast memory</span><span class="ls">— slow memory</span></div>
+        <canvas class="chart" id="wchart" height="70" style="margin-bottom:0"></canvas>
+      </div>
+
+      <div class="panelbox">
+        <h2>PID gains</h2>
+        <div class="ctl"><label>Kp joint 1</label><input type="range" id="kp1" min="0" max="480" step="1" value="40"><span class="val" id="kp1_v">40</span></div>
+        <div class="ctl"><label>Kp joint 2</label><input type="range" id="kp2" min="0" max="240" step="1" value="20"><span class="val" id="kp2_v">20</span></div>
+        <div class="ctl"><label>Ki joint 1</label><input type="range" id="ki1" min="0" max="160" step="1" value="8"><span class="val" id="ki1_v">8</span></div>
+        <div class="ctl"><label>Ki joint 2</label><input type="range" id="ki2" min="0" max="80" step="1" value="4"><span class="val" id="ki2_v">4</span></div>
+        <div class="ctl"><label>Kd joint 1</label><input type="range" id="kd1" min="0" max="72" step="0.5" value="8"><span class="val" id="kd1_v">8.0</span></div>
+        <div class="ctl"><label>Kd joint 2</label><input type="range" id="kd2" min="0" max="28" step="0.5" value="3"><span class="val" id="kd2_v">3.0</span></div>
+      </div>
+
+      <div class="panelbox">
+        <h2>Challenges</h2>
+        <div class="ctl"><label>disturbance</label><input type="range" id="damp" min="0" max="10" step="0.1" value="4"><span class="val" id="damp_v">4.0 N·m</span></div>
+        <div class="ctl"><label>tip payload</label><input type="range" id="tipmass" min="0" max="1" step="0.01" value="0"><span class="val" id="tipmass_v">0.00 kg</span></div>
+      </div>
+
+      <details>
+        <summary>Module internals</summary>
+        <div class="inner">
+          <div class="ctl"><label>learning rate</label><input type="range" id="lr" min="0" max="2" step="0.01" value="0.5"><span class="val" id="lr_v">0.50</span></div>
+          <div class="ctl"><label>clamp</label><input type="range" id="clamp" min="0" max="25" step="0.5" value="12.5"><span class="val" id="clamp_v">12.5 N·m</span></div>
+          <div class="ctl"><label>trace decay</label><input type="range" id="trace" min="0.5" max="0.995" step="0.005" value="0.95"><span class="val" id="trace_v">0.950</span></div>
+          <div class="ctl"><label>Golgi gain</label><input type="range" id="golgi" min="0.02" max="1" step="0.01" value="0.3"><span class="val" id="golgi_v">0.30</span></div>
+          <div class="ctl"><label>output tau</label><input type="range" id="tauout" min="0" max="0.2" step="0.005" value="0.05"><span class="val" id="tauout_v">50 ms</span></div>
+        </div>
+      </details>
+
+      <div class="panelbox">
+        <h2>Event log</h2>
+        <div id="eventlog"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ============ deterministic rng ============ */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+  return((t^t>>>14)>>>0)/4294967296}}
+function gauss(rng){let u=0,v=0;while(u===0)u=rng();while(v===0)v=rng();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+
+/* ============ plant (mirrors sim/plant.py) ============ */
+const G=9.81;
+const DTMP=[0,0],K1=[0,0,0,0],K2=[0,0,0,0],K3=[0,0,0,0],K4=[0,0,0,0],T4=[0,0,0,0];
+const plant={
+  m1:1,m2:1,l1:1,l2:1,fric1:0.5,fric2:0.5,tipMass:0,
+  distAmp:4,distFreq:0.7,distPhase:[0,Math.PI/3],
+  s:[Math.PI/2,0,0,0],t:0,
+  reset(th1,th2){this.s=[th1,th2,0,0];this.t=0},
+  disturbance(t,out){const w=2*Math.PI*this.distFreq;
+    out[0]=this.distAmp*Math.sin(w*t+this.distPhase[0]);
+    out[1]=this.distAmp*Math.sin(w*t+this.distPhase[1])},
+  accel(s,tau,t,out){
+    const m1=this.m1,m2=this.m2,mt=this.tipMass,l1=this.l1,l2=this.l2;
+    const lc1=l1/2,lc2=l2/2,I1=m1*l1*l1/12,I2=m2*l2*l2/12;
+    const a1=m1*lc1*lc1+I1+(m2+mt)*l1*l1, a2=m2*lc2*lc2+I2+mt*l2*l2;
+    const a3=(m2*lc2+mt*l2)*l1;
+    const b1=(m1*lc1+(m2+mt)*l1)*G, b2=(m2*lc2+mt*l2)*G;
+    const th1=s[0],th2=s[1],w1=s[2],w2=s[3];
+    const c2=Math.cos(th2),s2=Math.sin(th2);
+    const M11=a1+a2+2*a3*c2, M12=a2+a3*c2, M22=a2;
+    const cor1=-a3*s2*(2*w1*w2+w2*w2), cor2=a3*s2*w1*w1;
+    const g1=b1*Math.cos(th1)+b2*Math.cos(th1+th2), g2=b2*Math.cos(th1+th2);
+    this.disturbance(t,DTMP);
+    const r1=tau[0]+DTMP[0]-cor1-g1-this.fric1*w1;
+    const r2=tau[1]+DTMP[1]-cor2-g2-this.fric2*w2;
+    const det=M11*M22-M12*M12;
+    out[0]=w1;out[1]=w2;out[2]=(M22*r1-M12*r2)/det;out[3]=(M11*r2-M12*r1)/det},
+  step(tau,dt){const s=this.s,t=this.t;
+    this.accel(s,tau,t,K1);
+    for(let i=0;i<4;i++)T4[i]=s[i]+0.5*dt*K1[i];
+    this.accel(T4,tau,t+dt/2,K2);
+    for(let i=0;i<4;i++)T4[i]=s[i]+0.5*dt*K2[i];
+    this.accel(T4,tau,t+dt/2,K3);
+    for(let i=0;i<4;i++)T4[i]=s[i]+dt*K3[i];
+    this.accel(T4,tau,t+dt,K4);
+    for(let i=0;i<4;i++)s[i]+=dt/6*(K1[i]+2*K2[i]+2*K3[i]+K4[i]);
+    this.t+=dt}
+};
+
+/* ============ reference: two tasks ============ */
+const PHI=(1+Math.sqrt(5))/2;
+const TASKS={
+  upright:{center:[Math.PI/2,0],amp:[[0.10,0.05],[0.08,0.05]]},
+  swing:{center:[-Math.PI/2,0.6],amp:[[0.55,0.25],[0.45,0.22]]}
+};
+const ref={
+  center:TASKS.upright.center, amp:TASKS.upright.amp,
+  freq:[[0.30,0.30*Math.SQRT2],[0.45,0.45*PHI]],
+  theta(t,out){for(let j=0;j<2;j++){let v=this.center[j];
+    for(let k=0;k<2;k++)v+=this.amp[j][k]*Math.sin(2*Math.PI*this.freq[j][k]*t);
+    out[j]=v}},
+  thetaDot(t,out){for(let j=0;j<2;j++){let v=0;
+    for(let k=0;k<2;k++){const w=2*Math.PI*this.freq[j][k];
+      v+=this.amp[j][k]*w*Math.cos(w*t)}out[j]=v}}
+};
+
+/* ============ pid ============ */
+const pid={
+  kp:[40,20],ki:[8,4],kd:[8,3],uMax:50,integ:[0,0],
+  reset(){this.integ=[0,0]},
+  step(err,errDot,dt,out){
+    for(let j=0;j<2;j++){
+      this.integ[j]+=err[j]*dt;
+      let u=this.kp[j]*err[j]+this.ki[j]*this.integ[j]+this.kd[j]*errDot[j];
+      if(Math.abs(u)>this.uMax){this.integ[j]-=err[j]*dt;
+        u=Math.max(-this.uMax,Math.min(this.uMax,u))}
+      out[j]=u}}
+};
+
+/* ============ cerebellum (mirrors cereb/module.py, arrays sized to cap) == */
+const N_CTX=12,FAN_IN=4,CAP=2000;
+const XN=new Float64Array(N_CTX);
+const cereb={
+  n0:64,n:64,lr:0.5,traceDecay:0.95,leak:5e-3,clamp:12.5,
+  kGolgi:0.3,tauGolgi:0.1,tauOut:0.05,normAlpha:2e-3,dt:0.01,
+  lrSlow:0.05,
+  growthBlock:0.2,growthCooldown:20,convThresh:0.01,
+  autocorrThresh:0.15,rmsFloor:0.01,pruneFrac:0.02,pruneAfter:60,
+  init(seed){this.rng=mulberry32(seed);this.n=this.n0;
+    this.idx=new Int32Array(CAP*FAN_IN);this.wIn=new Float64Array(CAP*FAN_IN);
+    this.biasArr=new Float64Array(CAP);
+    for(let i=0;i<CAP;i++)this.seedUnit(i);
+    this.mu=new Float64Array(N_CTX);this.varr=new Float64Array(N_CTX).fill(1);
+    this.inh=0;
+    this.wf0=new Float64Array(CAP);this.wf1=new Float64Array(CAP);
+    this.ws0=new Float64Array(CAP);this.ws1=new Float64Array(CAP);
+    this.elig=new Float64Array(CAP);this.sAct=new Float64Array(CAP);
+    this.lowTime=new Float64Array(CAP);
+    this.out=[0,0];this.nanEvents=0;this.active=0;
+    this.decAcc=[0,0];this.decN=0;this.errHist=[];this.normHist=[];
+    this.lastGrowth=-1e9;this.stepI=0;this.newest=-1},
+  seedUnit(i){const r=this.rng,o=i*FAN_IN;
+    for(let k=0;k<FAN_IN;k++){this.idx[o+k]=Math.floor(r()*N_CTX);
+      this.wIn[o+k]=gauss(r)/Math.sqrt(FAN_IN)}
+    this.biasArr[i]=gauss(r)*0.5},
+  resetWeights(){this.wf0.fill(0);this.wf1.fill(0);this.ws0.fill(0);
+    this.ws1.fill(0);this.elig.fill(0);this.out=[0,0];this.n=this.n0;
+    this.errHist=[];this.normHist=[];this.lastGrowth=-1e9;this.lowTime.fill(0)},
+  step(ctx,err,corr,learn){
+    const a=this.normAlpha,n=this.n;
+    for(let c=0;c<N_CTX;c++){this.mu[c]+=a*(ctx[c]-this.mu[c]);
+      const d=ctx[c]-this.mu[c];this.varr[c]+=a*(d*d-this.varr[c]);
+      XN[c]=d/Math.sqrt(this.varr[c]+1e-8)}
+    let sum=0,active=0;
+    for(let i=0;i<n;i++){const o=i*FAN_IN;
+      let z=this.biasArr[i]
+        +this.wIn[o]*XN[this.idx[o]]+this.wIn[o+1]*XN[this.idx[o+1]]
+        +this.wIn[o+2]*XN[this.idx[o+2]]+this.wIn[o+3]*XN[this.idx[o+3]];
+      let s=Math.tanh(z)-this.inh;
+      if(s<0)s=0;else active++;
+      this.sAct[i]=s;sum+=s}
+    this.inh+=(sum*this.kGolgi-this.inh)*this.dt/this.tauGolgi;
+    this.active=active/Math.max(n,1);
+    let r0=0,r1=0;
+    for(let i=0;i<n;i++){const s=this.sAct[i];
+      r0+=(this.wf0[i]+this.ws0[i])*s;r1+=(this.wf1[i]+this.ws1[i])*s}
+    r0=Math.max(-this.clamp,Math.min(this.clamp,r0));
+    r1=Math.max(-this.clamp,Math.min(this.clamp,r1));
+    if(this.tauOut>0){const k=this.dt/this.tauOut;
+      this.out[0]+=(r0-this.out[0])*k;this.out[1]+=(r1-this.out[1])*k}
+    else{this.out[0]=r0;this.out[1]=r1}
+    if(learn&&this.lr!==0){
+      const td=this.traceDecay,lk=1-this.leak,
+            f0=this.lr*err[0],f1=this.lr*err[1],
+            s0=this.lrSlow*err[0],s1=this.lrSlow*err[1];
+      let bad=false;
+      for(let i=0;i<n;i++){const ei=this.elig[i]*td+this.sAct[i];this.elig[i]=ei;
+        this.wf0[i]=(this.wf0[i]+f0*ei)*lk;this.wf1[i]=(this.wf1[i]+f1*ei)*lk;
+        this.ws0[i]+=s0*ei;this.ws1[i]+=s1*ei;
+        if(!Number.isFinite(this.wf0[i])||!Number.isFinite(this.ws0[i]))bad=true}
+      if(bad){this.resetWeights();this.nanEvents++;
+        logEvent('NaN guard tripped — memory zeroed')}
+      this.housekeeping(err);
+    }
+    this.stepI++;
+    corr[0]=this.out[0];corr[1]=this.out[1]},
+  housekeeping(err){
+    this.decAcc[0]+=err[0];this.decAcc[1]+=err[1];this.decN++;
+    if(this.decN>=10){
+      this.errHist.push([this.decAcc[0]/10,this.decAcc[1]/10]);
+      if(this.errHist.length>300)this.errHist.shift();
+      this.decAcc=[0,0];this.decN=0}
+    if(this.stepI%100!==0)return;
+    this.normHist.push(this.fastNorm());
+    if(this.normHist.length>11)this.normHist.shift();
+    this.maybePrune();this.maybeGrow()},
+  residStats(){
+    if(this.errHist.length<100)return[0,0];
+    const e=this.errHist,N=e.length;
+    let ms=0;for(const r of e)ms+=r[0]*r[0]+r[1]*r[1];
+    const rms=Math.sqrt(ms/N);
+    let rhoMax=0;
+    for(let j=0;j<2;j++){
+      let m=0;for(const r of e)m+=r[j];m/=N;
+      let den=1e-12;for(const r of e)den+=(r[j]-m)*(r[j]-m);
+      for(let lag=1;lag<=5;lag++){let num=0;
+        for(let i=lag;i<N;i++)num+=(e[i][j]-m)*(e[i-lag][j]-m);
+        rhoMax=Math.max(rhoMax,Math.abs(num/den))}}
+    return[rms,rhoMax]},
+  converged(){if(this.normHist.length<11)return false;
+    const now=this.normHist[10],ago=this.normHist[0];
+    return Math.abs(now-ago)<this.convThresh*Math.max(now,1)},
+  maybeGrow(){
+    if(this.n>=CAP)return;
+    if(plant.t-this.lastGrowth<this.growthCooldown)return;
+    if(!this.converged())return;
+    const[rms,rho]=this.residStats();
+    if(rms<this.rmsFloor||rho<this.autocorrThresh)return;
+    const nNew=Math.min(Math.max(Math.floor(this.n*this.growthBlock),4),CAP-this.n);
+    this.newest=this.n;this.n+=nNew;this.lastGrowth=plant.t;
+    logEvent('<span class="grow">grew '+(this.n-nNew)+' → '+this.n+
+      '</span> (residual rms '+rms.toFixed(4)+', autocorr '+rho.toFixed(2)+')')},
+  maybePrune(){
+    let mean=0;const n=this.n;
+    for(let i=0;i<n;i++)mean+=Math.abs(this.wf0[i])+Math.abs(this.wf1[i])
+      +Math.abs(this.ws0[i])+Math.abs(this.ws1[i]);
+    mean/=n;if(mean<1e-9)return;
+    let dead=0;
+    for(let i=0;i<n;i++){
+      const w=Math.abs(this.wf0[i])+Math.abs(this.wf1[i])
+        +Math.abs(this.ws0[i])+Math.abs(this.ws1[i]);
+      if(w<this.pruneFrac*mean){this.lowTime[i]+=1;
+        if(this.lowTime[i]>this.pruneAfter){this.seedUnit(i);
+          this.wf0[i]=this.wf1[i]=this.ws0[i]=this.ws1[i]=0;
+          this.elig[i]=0;this.lowTime[i]=0;dead++}}
+      else this.lowTime[i]=0}
+    if(dead>0)logEvent('recycled '+dead+' dead units')},
+  fastNorm(){let s=0;for(let i=0;i<this.n;i++)s+=this.wf0[i]*this.wf0[i]
+    +this.wf1[i]*this.wf1[i];return Math.sqrt(s)},
+  slowNorm(){let s=0;for(let i=0;i<this.n;i++)s+=this.ws0[i]*this.ws0[i]
+    +this.ws1[i]*this.ws1[i];return Math.sqrt(s)}
+};
+
+/* ============ closed loop ============ */
+const DT_CTRL=0.01,DT_SIM=0.001,SUBSTEPS=10;
+let learning=false,paused=false,speed=1;
+const errV=[0,0],errDotV=[0,0],uPid=[0,0],uC=[0,0],uTot=[0,0],
+      refV=[0,0],refDotV=[0,0],ctxV=new Float64Array(N_CTX);
+
+const RMS_N=500;
+const rmsBuf=new Float64Array(RMS_N);let rmsI=0,rmsSum=0,rmsFill=0;
+function pushRms(sq){rmsSum-=rmsBuf[rmsI];rmsBuf[rmsI]=sq;rmsSum+=sq;
+  rmsI=(rmsI+1)%RMS_N;if(rmsFill<RMS_N)rmsFill++}
+function rollingRms(){return rmsFill?Math.sqrt(Math.max(rmsSum,0)/rmsFill):0}
+
+let baseline=null;
+
+function controlStep(){
+  const t=plant.t;
+  ref.theta(t,refV);ref.thetaDot(t,refDotV);
+  errV[0]=refV[0]-plant.s[0];errV[1]=refV[1]-plant.s[1];
+  errDotV[0]=refDotV[0]-plant.s[2];errDotV[1]=refDotV[1]-plant.s[3];
+  pid.step(errV,errDotV,DT_CTRL,uPid);
+  uTot[0]=uPid[0];uTot[1]=uPid[1];
+  if(learning){
+    const ph=2*Math.PI*plant.distFreq*t;
+    ctxV[0]=plant.s[0];ctxV[1]=plant.s[1];ctxV[2]=plant.s[2];ctxV[3]=plant.s[3];
+    ctxV[4]=errV[0];ctxV[5]=errV[1];ctxV[6]=errDotV[0];ctxV[7]=errDotV[1];
+    ctxV[8]=uPid[0];ctxV[9]=uPid[1];ctxV[10]=Math.sin(ph);ctxV[11]=Math.cos(ph);
+    cereb.step(ctxV,errV,uC,true);
+    uTot[0]+=uC[0];uTot[1]+=uC[1];
+  }else{uC[0]=0;uC[1]=0}
+  pushRms(errV[0]*errV[0]+errV[1]*errV[1]);
+  for(let k=0;k<SUBSTEPS;k++)plant.step(uTot,DT_SIM);
+}
+
+/* ============ event log ============ */
+const logEl=document.getElementById('eventlog');
+function logEvent(msg){const line=document.createElement('div');
+  line.innerHTML='<span class="t">t='+plant.t.toFixed(1)+'s</span> '+msg;
+  logEl.appendChild(line);logEl.scrollTop=logEl.scrollHeight;
+  while(logEl.childNodes.length>200)logEl.removeChild(logEl.firstChild)}
+
+/* ============ charts ============ */
+function stripChart(id,n){return{el:document.getElementById(id),data:[],n,
+  push(v){this.data.push(v);if(this.data.length>this.n)this.data.shift()}}}
+const rmsChart=stripChart('rmschart',300);
+const wChart=stripChart('wchart',300);
+function drawStrip(ch,series,colors,dashedRef){
+  const c=ch.el,x2=c.getContext('2d');
+  const W=c.width=c.clientWidth*devicePixelRatio,H=c.height;
+  x2.clearRect(0,0,W,H);
+  let max=1e-9;
+  for(const row of ch.data)for(let k=0;k<series;k++)max=Math.max(max,row[k]);
+  if(dashedRef!=null)max=Math.max(max,dashedRef);
+  max*=1.12;
+  x2.strokeStyle='#2e3945';x2.lineWidth=1;x2.beginPath();
+  for(let gy=1;gy<3;gy++){const y=H*gy/3;x2.moveTo(0,y);x2.lineTo(W,y)}
+  x2.stroke();
+  if(dashedRef!=null){const y=H-(dashedRef/max)*H;
+    x2.strokeStyle='#8b98a5';x2.setLineDash([5,4]);x2.beginPath();
+    x2.moveTo(0,y);x2.lineTo(W,y);x2.stroke();x2.setLineDash([])}
+  for(let k=0;k<series;k++){
+    x2.strokeStyle=colors[k];x2.lineWidth=1.6;x2.beginPath();
+    ch.data.forEach((row,i)=>{const x=i/(ch.n-1)*W,y=H-(row[k]/max)*H;
+      i===0?x2.moveTo(x,y):x2.lineTo(x,y)});
+    x2.stroke()}
+  x2.fillStyle='#8b98a5';x2.font=(10*devicePixelRatio)+'px IBM Plex Mono';
+  x2.fillText(max.toPrecision(2),4*devicePixelRatio,11*devicePixelRatio);
+}
+
+/* ============ brain map ============ */
+const brainEl=document.getElementById('brain');
+function drawBrain(){
+  const W=brainEl.width=brainEl.clientWidth*devicePixelRatio,H=brainEl.height;
+  const x2=brainEl.getContext('2d');
+  x2.fillStyle='#1d242c';x2.fillRect(0,0,W,H);
+  const n=cereb.n;
+  const cell=Math.max(4,Math.min(16,Math.floor(Math.sqrt(W*H/Math.max(n,1)))));
+  const cols=Math.floor(W/cell);
+  let wsMax=1e-9;
+  for(let i=0;i<n;i++)wsMax=Math.max(wsMax,
+    Math.abs(cereb.ws0[i])+Math.abs(cereb.ws1[i]));
+  for(let i=0;i<n;i++){
+    const cx=(i%cols)*cell,cy=Math.floor(i/cols)*cell;
+    if(cy+cell>H)break;
+    const ws=(Math.abs(cereb.ws0[i])+Math.abs(cereb.ws1[i]))/wsMax;
+    const act=Math.min(1,cereb.sAct[i]*2.2);
+    /* base: consolidated skill in slow-memory blue; firing adds coral glow */
+    let r=35+ws*20+act*205, g=43+ws*80+act*90, b=53+ws*140+act*40;
+    x2.fillStyle='rgb('+(r|0)+','+(g|0)+','+(b|0)+')';
+    x2.fillRect(cx+1,cy+1,cell-2,cell-2);
+  }
+  document.getElementById('braininfo').textContent=
+    cereb.n+' units · '+(cereb.active*100).toFixed(0)+'% firing';
+}
+
+/* ============ pendulum ============ */
+const pendEl=document.getElementById('pend');
+const tipTrail=[];
+function drawPend(){
+  const c=pendEl,x2=c.getContext('2d');
+  const W=c.width=c.clientWidth*devicePixelRatio,
+        H=c.height=c.clientHeight*devicePixelRatio;
+  x2.clearRect(0,0,W,H);
+  const cx=W/2,cy=H*0.55,sc=Math.min(W,H)/4.8;
+  const rr=[0,0];
+  x2.strokeStyle='rgba(139,152,165,0.28)';x2.lineWidth=devicePixelRatio;
+  x2.setLineDash([3,4]);x2.beginPath();
+  for(let k=0;k<=120;k++){ref.theta(plant.t+k*0.05,rr);
+    const x=cx+sc*(plant.l1*Math.cos(rr[0])+plant.l2*Math.cos(rr[0]+rr[1])),
+          y=cy-sc*(plant.l1*Math.sin(rr[0])+plant.l2*Math.sin(rr[0]+rr[1]));
+    k===0?x2.moveTo(x,y):x2.lineTo(x,y)}
+  x2.stroke();x2.setLineDash([]);
+  ref.theta(plant.t,rr);
+  const rx=cx+sc*(plant.l1*Math.cos(rr[0])+plant.l2*Math.cos(rr[0]+rr[1])),
+        ry=cy-sc*(plant.l1*Math.sin(rr[0])+plant.l2*Math.sin(rr[0]+rr[1]));
+  x2.strokeStyle='rgba(139,152,165,0.8)';x2.lineWidth=1.5*devicePixelRatio;
+  x2.beginPath();x2.arc(rx,ry,6*devicePixelRatio,0,7);x2.stroke();
+  const th1=plant.s[0],th2=plant.s[1];
+  const x1=cx+sc*plant.l1*Math.cos(th1),y1=cy-sc*plant.l1*Math.sin(th1);
+  const x2p=x1+sc*plant.l2*Math.cos(th1+th2),y2=y1-sc*plant.l2*Math.sin(th1+th2);
+  /* error tether: tip to target, reddens with error size */
+  {const d=Math.hypot(x2p-rx,y2-ry)/sc;              // error in plant metres
+   const al=Math.min(0.9,0.15+d*2.2);
+   x2.strokeStyle='rgba(255,'+(Math.max(60,180-d*400)|0)+',80,'+al+')';
+   x2.lineWidth=1.5*devicePixelRatio;x2.setLineDash([2,3]);
+   x2.beginPath();x2.moveTo(x2p,y2);x2.lineTo(rx,ry);x2.stroke();
+   x2.setLineDash([])}
+  tipTrail.push([x2p/W,y2/H]);if(tipTrail.length>240)tipTrail.shift();
+  for(let i=1;i<tipTrail.length;i++){
+    const a=i/tipTrail.length;
+    x2.strokeStyle='rgba(255,122,89,'+(a*0.55)+')';
+    x2.lineWidth=1.4*devicePixelRatio;x2.beginPath();
+    x2.moveTo(tipTrail[i-1][0]*W,tipTrail[i-1][1]*H);
+    x2.lineTo(tipTrail[i][0]*W,tipTrail[i][1]*H);x2.stroke()}
+  x2.lineCap='round';
+  x2.strokeStyle='#dfe6ec';x2.lineWidth=7*devicePixelRatio;
+  x2.beginPath();x2.moveTo(cx,cy);x2.lineTo(x1,y1);x2.stroke();
+  x2.strokeStyle='#b9c4cf';
+  x2.beginPath();x2.moveTo(x1,y1);x2.lineTo(x2p,y2);x2.stroke();
+  x2.fillStyle='#5bc0eb';
+  x2.beginPath();x2.arc(cx,cy,5.5*devicePixelRatio,0,7);x2.fill();
+  x2.beginPath();x2.arc(x1,y1,5*devicePixelRatio,0,7);x2.fill();
+  const tr=(4+plant.tipMass*9)*devicePixelRatio;
+  x2.fillStyle='#ff7a59';
+  x2.beginPath();x2.arc(x2p,y2,tr,0,7);x2.fill();
+}
+
+/* ============ ui ============ */
+function bind(id,fmt,setter){const el=document.getElementById(id),
+  vEl=document.getElementById(id+'_v');
+  el.addEventListener('input',()=>{const v=parseFloat(el.value);
+    vEl.textContent=fmt(v);setter(v)})}
+bind('kp1',v=>v.toFixed(0),v=>pid.kp[0]=v);
+bind('kp2',v=>v.toFixed(0),v=>pid.kp[1]=v);
+bind('ki1',v=>v.toFixed(0),v=>pid.ki[0]=v);
+bind('ki2',v=>v.toFixed(0),v=>pid.ki[1]=v);
+bind('kd1',v=>v.toFixed(1),v=>pid.kd[0]=v);
+bind('kd2',v=>v.toFixed(1),v=>pid.kd[1]=v);
+bind('damp',v=>v.toFixed(1)+' N·m',v=>plant.distAmp=v);
+bind('tipmass',v=>v.toFixed(2)+' kg',v=>plant.tipMass=v);
+bind('lr',v=>v.toFixed(2),v=>cereb.lr=v);
+bind('clamp',v=>v.toFixed(1)+' N·m',v=>cereb.clamp=v);
+bind('trace',v=>v.toFixed(3),v=>cereb.traceDecay=v);
+bind('golgi',v=>v.toFixed(2),v=>cereb.kGolgi=v);
+bind('tauout',v=>Math.round(v*1000)+' ms',v=>cereb.tauOut=v);
+
+const sw=document.getElementById('bigswitch');
+function setLearning(on){
+  learning=on;
+  sw.classList.toggle('on',on);
+  sw.setAttribute('aria-checked',on);
+  if(on){
+    baseline=rollingRms()||null;
+    document.getElementById('swsub').textContent='on — learning from the error';
+    logEvent('self-learning ON'+(baseline?
+      ' — baseline frozen at '+baseline.toFixed(4)+' rad':''));
+  }else{
+    document.getElementById('swsub').textContent='off — PID is on its own';
+    logEvent('self-learning OFF (memory kept)');
+  }
+}
+sw.addEventListener('click',()=>setLearning(!learning));
+sw.addEventListener('keydown',e=>{
+  if(e.key===' '||e.key==='Enter'){e.preventDefault();setLearning(!learning)}});
+
+function setTask(name){
+  ref.center=TASKS[name].center;ref.amp=TASKS[name].amp;
+  const r=[0,0];ref.theta(plant.t,r);plant.reset(r[0],r[1]);
+  plant.t=plant.t;  // keep clock
+  pid.reset();tipTrail.length=0;baseline=null;
+  document.getElementById('task_upright').classList.toggle('on',name==='upright');
+  document.getElementById('task_swing').classList.toggle('on',name==='swing');
+  logEvent('task: '+name+' (baseline cleared)');
+}
+document.getElementById('task_upright').addEventListener('click',()=>setTask('upright'));
+document.getElementById('task_swing').addEventListener('click',()=>setTask('swing'));
+
+document.getElementById('pause').addEventListener('click',e=>{
+  paused=!paused;e.target.textContent=paused?'Run':'Pause'});
+document.getElementById('speed').addEventListener('change',e=>{
+  speed=parseFloat(e.target.value)});
+document.getElementById('resetbrain').addEventListener('click',()=>{
+  cereb.resetWeights();baseline=rollingRms()||null;
+  logEvent('brain wiped — back to '+cereb.n0+' blank units')});
+
+/* ============ main loop ============ */
+let lastWall=performance.now(),frame=0,acc=0;
+function tick(now){
+  const wallDt=Math.min(0.1,(now-lastWall)/1000);lastWall=now;
+  if(!paused){
+    acc+=wallDt*speed;
+    let steps=0;
+    while(acc>=DT_CTRL&&steps<2000){controlStep();acc-=DT_CTRL;steps++}
+  }
+  frame++;
+  drawPend();
+  if(frame%4===0)drawBrain();
+  if(frame%6===0&&!paused){
+    const r=rollingRms();
+    rmsChart.push([r]);
+    wChart.push([cereb.fastNorm(),cereb.slowNorm()]);
+    drawStrip(rmsChart,1,['#ffd166'],baseline);
+    drawStrip(wChart,2,['#ff7a59','#5bc0eb'],null);
+    document.getElementById('simclock').textContent='t = '+plant.t.toFixed(1)+' s';
+    const head=document.getElementById('headline'),
+          sub=document.getElementById('headsub');
+    if(learning&&baseline){
+      const pct=r/baseline*100;
+      head.textContent=pct.toFixed(0)+'%';
+      head.style.color=pct<95?'#7ae582':(pct>110?'#ff7a59':'#dfe6ec');
+      sub.textContent='of the error when learning switched on ('+
+        r.toFixed(4)+' vs '+baseline.toFixed(4)+' rad)';
+    }else{
+      head.textContent=r.toFixed(4);head.style.color='#dfe6ec';
+      sub.textContent='tracking error, rad RMS (5 s window)';
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+cereb.init(1);
+{const r=[0,0];ref.theta(0,r);plant.reset(r[0],r[1])}
+logEvent('PID alone on the upright task — flick Self-learning when ready');
+requestAnimationFrame(tick);
+</script>

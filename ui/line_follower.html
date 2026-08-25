@@ -1,0 +1,513 @@
+<title>Line Follower with a Brain</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#14181d; --panel:#1d242c; --panel2:#232b35; --line:#2e3945;
+    --ink:#dfe6ec; --muted:#8b98a5; --faint:#5a6673;
+    --fast:#ff7a59; --slow:#5bc0eb; --rms:#ffd166; --good:#7ae582;
+    --sans:'IBM Plex Sans',system-ui,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+       font-size:13px;overflow:hidden}
+  .app{display:flex;flex-direction:column;height:100vh}
+  .bar{display:flex;align-items:center;gap:10px;padding:8px 14px;
+       background:var(--panel);border-bottom:1px solid var(--line)}
+  .bar h1{font-size:14px;font-weight:600}
+  .tag{font-family:var(--mono);font-size:10px;color:var(--muted);
+       border:1px solid var(--line);border-radius:3px;padding:2px 6px}
+  .spacer{flex:1}
+  button{font-family:var(--sans);font-size:12px;font-weight:500;color:var(--ink);
+         background:var(--panel2);border:1px solid var(--line);border-radius:4px;
+         padding:5px 12px;cursor:pointer}
+  button:hover{border-color:var(--faint)}
+  button:focus-visible,select:focus-visible{outline:2px solid var(--slow);outline-offset:1px}
+  select{font-family:var(--mono);font-size:12px;color:var(--ink);
+         background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:4px 6px}
+
+  .main{display:flex;flex:1;min-height:0}
+  .stage{flex:1;display:flex;flex-direction:column;min-width:0;padding:12px;gap:8px}
+  #world{flex:1;min-height:0;width:100%;background:var(--panel);
+         border:1px solid var(--line);border-radius:6px}
+  .caption{font-family:var(--mono);font-size:10px;color:var(--muted);
+           letter-spacing:.06em;text-transform:uppercase}
+  #brain{width:100%;background:var(--panel);border:1px solid var(--line);
+         border-radius:6px}
+  .brainrow{display:flex;justify-content:space-between;align-items:baseline}
+
+  .rail{width:330px;flex:none;overflow-y:auto;background:var(--panel);
+        border-left:1px solid var(--line);padding:12px;display:flex;
+        flex-direction:column;gap:10px}
+  .bigswitch{display:flex;align-items:center;gap:12px;background:var(--panel2);
+             border:1px solid var(--line);border-radius:8px;padding:14px;
+             cursor:pointer;user-select:none}
+  .bigswitch:focus-visible{outline:2px solid var(--slow);outline-offset:1px}
+  .track{width:56px;height:30px;border-radius:15px;background:var(--line);
+         position:relative;transition:background .15s;flex:none}
+  .knob{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;
+        background:var(--muted);transition:left .15s,background .15s}
+  .bigswitch.on .track{background:#7a3d2b}
+  .bigswitch.on .knob{left:29px;background:var(--fast)}
+  .swlabel{font-weight:600;font-size:15px}
+  .swsub{font-size:11px;color:var(--muted)}
+
+  .headline{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+            padding:10px 14px}
+  .headline .big{font-family:var(--mono);font-size:34px;font-weight:500;
+                 line-height:1.05;font-variant-numeric:tabular-nums}
+  .headline .sub{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:3px}
+
+  .panelbox{border:1px solid var(--line);border-radius:6px;padding:9px 11px 10px;
+            background:var(--panel)}
+  .panelbox h2{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--muted);
+               letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px}
+  .ctl{display:grid;grid-template-columns:84px 1fr 58px;align-items:center;
+       gap:8px;margin-bottom:6px}
+  .ctl label{color:var(--muted);font-size:12px}
+  .ctl .val{font-family:var(--mono);font-size:11px;text-align:right;
+            font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;
+      background:var(--line);border-radius:2px;outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+      width:13px;height:13px;border-radius:50%;background:var(--ink);cursor:pointer;
+      border:2px solid var(--panel)}
+  input[type=range]:focus-visible{outline:2px solid var(--slow);outline-offset:3px}
+
+  pre.code{font-family:var(--mono);font-size:11px;line-height:1.7;color:var(--ink);
+       background:var(--panel2);border:1px solid var(--line);border-radius:4px;
+       padding:9px 11px;overflow-x:auto}
+  pre.code .c{color:var(--faint)} pre.code .hl{color:var(--fast)}
+  #eventlog{font-family:var(--mono);font-size:10px;line-height:1.6;color:var(--muted);
+            background:var(--panel2);border:1px solid var(--line);border-radius:4px;
+            padding:6px 8px;height:76px;overflow-y:auto}
+  #eventlog .t{color:var(--faint)}
+  #eventlog .grow{color:var(--good)}
+  .statrow{display:flex;gap:14px;font-family:var(--mono);font-size:11px;
+           color:var(--muted);font-variant-numeric:tabular-nums}
+  .statrow b{color:var(--ink);font-weight:500}
+  .dotg{color:#9aa5b1} .dotb{color:var(--fast)}
+</style>
+
+<div class="app">
+  <div class="bar">
+    <h1>Line Follower with a Brain</h1>
+    <span class="tag">same crooked wheel · same crosswind · one has a cerebellum</span>
+    <span class="spacer"></span>
+    <span class="tag" id="simclock">t = 0.0 s</span>
+    <select id="simspeed"><option value="1" selected>1×</option>
+      <option value="2">2×</option><option value="5">5×</option>
+      <option value="10">10×</option></select>
+    <button id="pause">Pause</button>
+    <button id="resetbrain">Reset brain</button>
+  </div>
+  <div class="main">
+    <div class="stage">
+      <canvas id="world"></canvas>
+      <div class="brainrow">
+        <span class="caption">the brain — glow = firing · blue = consolidated skill</span>
+        <span class="caption" id="braininfo"></span>
+      </div>
+      <canvas id="brain" height="96"></canvas>
+    </div>
+    <div class="rail">
+      <div class="bigswitch" id="bigswitch" tabindex="0" role="switch" aria-checked="false">
+        <div class="track"><div class="knob"></div></div>
+        <div>
+          <div class="swlabel">Self-learning</div>
+          <div class="swsub" id="swsub">off — both cars are plain PD</div>
+        </div>
+      </div>
+      <div class="headline">
+        <div class="big" id="headline">—</div>
+        <div class="sub" id="headsub">brain car error vs plain car, rolling ~3 laps</div>
+      </div>
+      <div class="panelbox">
+        <h2>Off-line distance</h2>
+        <div class="statrow" style="margin-bottom:6px">
+          <span class="dotg">● plain <b id="rmsg">—</b></span>
+          <span class="dotb">● brain <b id="rmsb">—</b></span>
+        </div>
+        <canvas class="chart" id="rmschart" height="90" style="width:100%"></canvas>
+      </div>
+      <div class="panelbox">
+        <h2>The entire integration</h2>
+<pre class="code"><span class="c">// inside the 50 Hz steering loop:</span>
+let steer = -(kp*off + kd*doff);
+<span class="hl">steer += brain.step(ctx, -off);</span>
+<span class="c">// ...that's it. ctx = what the car
+// already knows: line offset, yaw
+// rate, odometry phase, PD output.</span></pre>
+      </div>
+      <div class="panelbox">
+        <h2>Controller &amp; faults</h2>
+        <div class="ctl"><label>Kp steer</label><input type="range" id="kp" min="0" max="12" step="0.1" value="4"><span class="val" id="kp_v">4.0</span></div>
+        <div class="ctl"><label>Kd steer</label><input type="range" id="kd" min="0" max="4" step="0.05" value="1"><span class="val" id="kd_v">1.00</span></div>
+        <div class="ctl"><label>speed</label><input type="range" id="vel" min="0.3" max="1.2" step="0.05" value="0.6"><span class="val" id="vel_v">0.60 m/s</span></div>
+        <div class="ctl"><label>crooked wheel</label><input type="range" id="bias" min="-12" max="12" step="0.5" value="6"><span class="val" id="bias_v">6.0°</span></div>
+        <div class="ctl"><label>crosswind</label><input type="range" id="wind" min="0" max="0.3" step="0.01" value="0.12"><span class="val" id="wind_v">0.12 m/s</span></div>
+      </div>
+      <div class="panelbox">
+        <h2>Event log</h2>
+        <div id="eventlog"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+  return((t^t>>>14)>>>0)/4294967296}}
+function gauss(rng){let u=0,v=0;while(u===0)u=rng();while(v===0)v=rng();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+
+/* ============ track: wavy closed loop, dense polyline ============ */
+const TN=2400,TPX=new Float64Array(TN),TPY=new Float64Array(TN),
+      TTX=new Float64Array(TN),TTY=new Float64Array(TN),TS=new Float64Array(TN);
+let TRACK_LEN=0;
+{
+  for(let i=0;i<TN;i++){const ph=i/TN*2*Math.PI;
+    const R=1.0+0.15*Math.sin(3*ph)+0.04*Math.sin(5*ph+1.3);
+    TPX[i]=R*Math.cos(ph);TPY[i]=R*Math.sin(ph)}
+  let s=0;
+  for(let i=0;i<TN;i++){
+    const j=(i+1)%TN,dx=TPX[j]-TPX[i],dy=TPY[j]-TPY[i];
+    const d=Math.hypot(dx,dy);TTX[i]=dx/d;TTY[i]=dy/d;TS[i]=s;s+=d}
+  TRACK_LEN=s;
+}
+/* nearest-point search local to a running index */
+function trackOffset(car){
+  let best=1e9,bi=car.ti;
+  for(let k=-50;k<=50;k++){const i=(car.ti+k+TN)%TN;
+    const dx=car.x-TPX[i],dy=car.y-TPY[i],d=dx*dx+dy*dy;
+    if(d<best){best=d;bi=i}}
+  car.ti=bi;
+  const dx=car.x-TPX[bi],dy=car.y-TPY[bi];
+  return{off:TTX[bi]*dy-TTY[bi]*dx, s:TS[bi]}   // signed: left of travel = +
+}
+
+/* ============ shared faults & controller gains ============ */
+const cfg={kp:4,kd:1,v:0.6,bias:6*Math.PI/180,wind:0.12,windDir:0.9};
+
+/* ============ car (kinematic bicycle) ============ */
+const WHEELBASE=0.15,DT_CTRL=0.02,SUB=4,DT_SIM=DT_CTRL/SUB;
+function makeCar(color){return{x:TPX[0],y:TPY[0],
+  psi:Math.atan2(TTY[0],TTX[0]),ti:0,lastOff:0,steer:0,yawRate:0,
+  trail:[],color}}
+function stepCar(car,steerCmd){
+  const d=Math.max(-0.6,Math.min(0.6,steerCmd));
+  car.steer=d;
+  for(let k=0;k<SUB;k++){
+    const yr=cfg.v/WHEELBASE*Math.tan(d+cfg.bias);
+    car.psi+=yr*DT_SIM;car.yawRate=yr;
+    car.x+=(cfg.v*Math.cos(car.psi)+cfg.wind*Math.cos(cfg.windDir))*DT_SIM;
+    car.y+=(cfg.v*Math.sin(car.psi)+cfg.wind*Math.sin(cfg.windDir))*DT_SIM;
+  }
+}
+
+/* ============ cerebellum (same architecture, 12 ctx channels) ============ */
+const N_CTX=12,FAN_IN=4,CAP=1000;
+const XN=new Float64Array(N_CTX);
+const brain={
+  n0:64,n:64,lr:0.5,traceDecay:0.97,leak:5e-3,clamp:0.5,
+  kGolgi:0.3,tauGolgi:0.1,tauOut:0.05,normAlpha:2e-3,dt:DT_CTRL,lrSlow:0.05,
+  growthBlock:0.2,growthCooldown:20,convThresh:0.01,
+  autocorrThresh:0.15,rmsFloor:0.01,pruneFrac:0.02,pruneAfter:60,
+  init(seed){this.rng=mulberry32(seed);this.n=this.n0;
+    this.idx=new Int32Array(CAP*FAN_IN);this.wIn=new Float64Array(CAP*FAN_IN);
+    this.biasArr=new Float64Array(CAP);
+    for(let i=0;i<CAP;i++)this.seedUnit(i);
+    this.mu=new Float64Array(N_CTX);this.varr=new Float64Array(N_CTX).fill(1);
+    this.inh=0;this.wf=new Float64Array(CAP);this.ws=new Float64Array(CAP);
+    this.elig=new Float64Array(CAP);this.sAct=new Float64Array(CAP);
+    this.lowTime=new Float64Array(CAP);
+    this.out=0;this.active=0;this.nanEvents=0;
+    this.decAcc=0;this.decN=0;this.errHist=[];this.normHist=[];
+    this.lastGrowth=-1e9;this.stepI=0},
+  seedUnit(i){const r=this.rng,o=i*FAN_IN;
+    for(let k=0;k<FAN_IN;k++){this.idx[o+k]=Math.floor(r()*N_CTX);
+      this.wIn[o+k]=gauss(r)/Math.sqrt(FAN_IN)}
+    this.biasArr[i]=gauss(r)*0.5},
+  resetWeights(){this.wf.fill(0);this.ws.fill(0);this.elig.fill(0);this.out=0;
+    this.n=this.n0;this.errHist=[];this.normHist=[];this.lastGrowth=-1e9;
+    this.lowTime.fill(0)},
+  step(ctx,err,learn){
+    const a=this.normAlpha,n=this.n;
+    for(let c=0;c<N_CTX;c++){this.mu[c]+=a*(ctx[c]-this.mu[c]);
+      const d=ctx[c]-this.mu[c];this.varr[c]+=a*(d*d-this.varr[c]);
+      XN[c]=d/Math.sqrt(this.varr[c]+1e-8)}
+    let sum=0,active=0;
+    for(let i=0;i<n;i++){const o=i*FAN_IN;
+      let z=this.biasArr[i]
+        +this.wIn[o]*XN[this.idx[o]]+this.wIn[o+1]*XN[this.idx[o+1]]
+        +this.wIn[o+2]*XN[this.idx[o+2]]+this.wIn[o+3]*XN[this.idx[o+3]];
+      let s=Math.tanh(z)-this.inh;
+      if(s<0)s=0;else active++;
+      this.sAct[i]=s;sum+=s}
+    this.inh+=(sum*this.kGolgi-this.inh)*this.dt/this.tauGolgi;
+    this.active=active/Math.max(n,1);
+    let r0=0;
+    for(let i=0;i<n;i++)r0+=(this.wf[i]+this.ws[i])*this.sAct[i];
+    r0=Math.max(-this.clamp,Math.min(this.clamp,r0));
+    this.out+=(r0-this.out)*(this.dt/this.tauOut);
+    if(learn&&this.lr!==0){
+      const td=this.traceDecay,lk=1-this.leak,f=this.lr*err,sl=this.lrSlow*err;
+      let bad=false;
+      for(let i=0;i<n;i++){const ei=this.elig[i]*td+this.sAct[i];this.elig[i]=ei;
+        this.wf[i]=(this.wf[i]+f*ei)*lk;this.ws[i]+=sl*ei;
+        if(!Number.isFinite(this.wf[i])||!Number.isFinite(this.ws[i]))bad=true}
+      if(bad){this.resetWeights();this.nanEvents++;
+        logEvent('NaN guard tripped — memory zeroed')}
+      this.housekeeping(err)}
+    this.stepI++;
+    return this.out},
+  housekeeping(err){
+    this.decAcc+=err;this.decN++;
+    if(this.decN>=5){this.errHist.push(this.decAcc/5);
+      if(this.errHist.length>300)this.errHist.shift();
+      this.decAcc=0;this.decN=0}
+    if(this.stepI%50!==0)return;
+    this.normHist.push(this.norm(this.wf));
+    if(this.normHist.length>11)this.normHist.shift();
+    this.maybePrune();this.maybeGrow()},
+  residStats(){
+    if(this.errHist.length<100)return[0,0];
+    const e=this.errHist,N=e.length;
+    let m=0,ms=0;for(const v of e){m+=v;ms+=v*v}m/=N;
+    const rms=Math.sqrt(ms/N);
+    let den=1e-12;for(const v of e)den+=(v-m)*(v-m);
+    let rhoMax=0;
+    for(let lag=1;lag<=5;lag++){let num=0;
+      for(let i=lag;i<N;i++)num+=(e[i]-m)*(e[i-lag]-m);
+      rhoMax=Math.max(rhoMax,Math.abs(num/den))}
+    return[rms,rhoMax]},
+  converged(){if(this.normHist.length<11)return false;
+    const now=this.normHist[10],ago=this.normHist[0];
+    return Math.abs(now-ago)<this.convThresh*Math.max(now,1)},
+  maybeGrow(){
+    if(this.n>=CAP)return;
+    if(simT-this.lastGrowth<this.growthCooldown)return;
+    if(!this.converged())return;
+    const[rms,rho]=this.residStats();
+    if(rms<this.rmsFloor||rho<this.autocorrThresh)return;
+    const nNew=Math.min(Math.max(Math.floor(this.n*this.growthBlock),4),CAP-this.n);
+    this.n+=nNew;this.lastGrowth=simT;
+    logEvent('<span class="grow">brain grew '+(this.n-nNew)+' → '+this.n+
+      '</span> (residual rms '+(rms*100).toFixed(1)+' cm, autocorr '+rho.toFixed(2)+')')},
+  maybePrune(){
+    let mean=0;const n=this.n;
+    for(let i=0;i<n;i++)mean+=Math.abs(this.wf[i])+Math.abs(this.ws[i]);
+    mean/=n;if(mean<1e-9)return;
+    let dead=0;
+    for(let i=0;i<n;i++){
+      const w=Math.abs(this.wf[i])+Math.abs(this.ws[i]);
+      if(w<this.pruneFrac*mean){this.lowTime[i]+=1;
+        if(this.lowTime[i]>this.pruneAfter){this.seedUnit(i);
+          this.wf[i]=this.ws[i]=this.elig[i]=0;this.lowTime[i]=0;dead++}}
+      else this.lowTime[i]=0}
+    if(dead>0)logEvent('recycled '+dead+' dead units')},
+  norm(w){let s=0;for(let i=0;i<this.n;i++)s+=w[i]*w[i];return Math.sqrt(s)}
+};
+
+/* ============ the two cars & loop ============ */
+let learning=false,paused=false,simMul=1,simT=0;
+const grayCar=makeCar('#9aa5b1'),brainCar=makeCar('#ff7a59');
+const ctxV=new Float64Array(N_CTX);
+function wrapPi(a){while(a>Math.PI)a-=2*Math.PI;
+  while(a<-Math.PI)a+=2*Math.PI;return a}
+
+const RN=1600;  // 32 s at 50 Hz (~3 laps, so the readout doesn't alias)
+function ring(){return{b:new Float64Array(RN),i:0,sum:0,fill:0,
+  push(v){this.sum-=this.b[this.i];this.b[this.i]=v;this.sum+=v;
+    this.i=(this.i+1)%RN;if(this.fill<RN)this.fill++},
+  rms(){return this.fill?Math.sqrt(Math.max(this.sum,0)/this.fill):0}}}
+const rmsG=ring(),rmsB=ring();
+
+function controlStep(){
+  // plain car: PD only
+  {const{off}=trackOffset(grayCar);
+   const doff=(off-grayCar.lastOff)/DT_CTRL;grayCar.lastOff=off;
+   stepCar(grayCar,-(cfg.kp*off+cfg.kd*doff));
+   rmsG.push(off*off)}
+  // brain car: PD + module (the integration is these three lines)
+  {const{off,s}=trackOffset(brainCar);
+   const doff=(off-brainCar.lastOff)/DT_CTRL;brainCar.lastOff=off;
+   let steer=-(cfg.kp*off+cfg.kd*doff);
+   if(learning){
+     const ph=2*Math.PI*s/TRACK_LEN;
+     ctxV[0]=off;ctxV[1]=doff;ctxV[2]=brainCar.yawRate;ctxV[3]=steer;
+     ctxV[4]=Math.sin(ph);ctxV[5]=Math.cos(ph);
+     ctxV[6]=Math.sin(2*ph);ctxV[7]=Math.cos(2*ph);
+     ctxV[8]=Math.sin(3*ph);ctxV[9]=Math.cos(3*ph);
+     ctxV[10]=Math.sin(5*ph);ctxV[11]=Math.cos(5*ph);
+     /* train on crosstrack + heading (Stanley form): steering acts on it
+        within one step, so credit assignment is clean; its zero-manifold
+        steers the car onto the line */
+     const psiTrack=Math.atan2(TTY[brainCar.ti],TTX[brainCar.ti]);
+     const hE=wrapPi(brainCar.psi-psiTrack);
+     steer+=brain.step(ctxV,-(hE+Math.atan(3*off/cfg.v)),true);
+   }
+   stepCar(brainCar,steer);
+   rmsB.push(off*off)}
+  simT+=DT_CTRL;
+}
+
+/* ============ log ============ */
+const logEl=document.getElementById('eventlog');
+function logEvent(msg){const line=document.createElement('div');
+  line.innerHTML='<span class="t">t='+simT.toFixed(1)+'s</span> '+msg;
+  logEl.appendChild(line);logEl.scrollTop=logEl.scrollHeight;
+  while(logEl.childNodes.length>200)logEl.removeChild(logEl.firstChild)}
+
+/* ============ rms chart ============ */
+const rmsChartEl=document.getElementById('rmschart');
+const chartData=[];
+function drawChart(){
+  const c=rmsChartEl,x2=c.getContext('2d');
+  const W=c.width=c.clientWidth*devicePixelRatio,H=c.height;
+  x2.clearRect(0,0,W,H);
+  let max=1e-9;
+  for(const r of chartData)max=Math.max(max,r[0],r[1]);
+  max*=1.12;
+  x2.strokeStyle='#2e3945';x2.lineWidth=1;x2.beginPath();
+  for(let gy=1;gy<3;gy++){x2.moveTo(0,H*gy/3);x2.lineTo(W,H*gy/3)}x2.stroke();
+  const cols=['#9aa5b1','#ff7a59'];
+  for(let k=0;k<2;k++){x2.strokeStyle=cols[k];x2.lineWidth=1.6;x2.beginPath();
+    chartData.forEach((row,i)=>{const x=i/299*W,y=H-(row[k]/max)*H;
+      i===0?x2.moveTo(x,y):x2.lineTo(x,y)});x2.stroke()}
+  x2.fillStyle='#8b98a5';x2.font=(10*devicePixelRatio)+'px IBM Plex Mono';
+  x2.fillText((max*100).toFixed(1)+' cm',4*devicePixelRatio,11*devicePixelRatio);
+}
+
+/* ============ brain map ============ */
+const brainEl=document.getElementById('brain');
+function drawBrain(){
+  const W=brainEl.width=brainEl.clientWidth*devicePixelRatio,H=brainEl.height;
+  const x2=brainEl.getContext('2d');
+  x2.fillStyle='#1d242c';x2.fillRect(0,0,W,H);
+  const n=brain.n;
+  const cell=Math.max(4,Math.min(14,Math.floor(Math.sqrt(W*H/Math.max(n,1)))));
+  const cols=Math.floor(W/cell);
+  let wsMax=1e-9;
+  for(let i=0;i<n;i++)wsMax=Math.max(wsMax,Math.abs(brain.ws[i]));
+  for(let i=0;i<n;i++){
+    const cx=(i%cols)*cell,cy=Math.floor(i/cols)*cell;
+    if(cy+cell>H)break;
+    const ws=Math.abs(brain.ws[i])/wsMax,act=Math.min(1,brain.sAct[i]*2.2);
+    const r=35+ws*20+act*205,g=43+ws*80+act*90,b=53+ws*140+act*40;
+    x2.fillStyle='rgb('+(r|0)+','+(g|0)+','+(b|0)+')';
+    x2.fillRect(cx+1,cy+1,cell-2,cell-2)}
+  document.getElementById('braininfo').textContent=
+    brain.n+' units · '+(brain.active*100).toFixed(0)+'% firing';
+}
+
+/* ============ world rendering ============ */
+const worldEl=document.getElementById('world');
+function drawWorld(){
+  const c=worldEl,x2=c.getContext('2d');
+  const W=c.width=c.clientWidth*devicePixelRatio,
+        H=c.height=c.clientHeight*devicePixelRatio;
+  x2.clearRect(0,0,W,H);
+  const sc=Math.min(W,H)/3.0,cx=W/2,cy=H/2;
+  const px=x=>cx+x*sc, py=y=>cy-y*sc;
+  /* track */
+  x2.strokeStyle='rgba(139,152,165,0.5)';x2.lineWidth=1.2*devicePixelRatio;
+  x2.setLineDash([4,5]);x2.beginPath();
+  for(let i=0;i<TN;i+=4){const x=px(TPX[i]),y=py(TPY[i]);
+    i===0?x2.moveTo(x,y):x2.lineTo(x,y)}
+  x2.closePath();x2.stroke();x2.setLineDash([]);
+  /* wind arrow */
+  {const ax=W-70*devicePixelRatio,ay=40*devicePixelRatio,
+     L=Math.min(34,10+cfg.wind*160)*devicePixelRatio;
+   x2.strokeStyle='#5bc0eb';x2.lineWidth=1.5*devicePixelRatio;
+   const dx=Math.cos(cfg.windDir),dy=-Math.sin(cfg.windDir);
+   x2.beginPath();x2.moveTo(ax-dx*L,ay-dy*L);x2.lineTo(ax,ay);x2.stroke();
+   x2.beginPath();x2.moveTo(ax,ay);
+   x2.lineTo(ax-dx*8*devicePixelRatio-dy*4*devicePixelRatio,
+             ay-dy*8*devicePixelRatio+dx*4*devicePixelRatio);
+   x2.lineTo(ax-dx*8*devicePixelRatio+dy*4*devicePixelRatio,
+             ay-dy*8*devicePixelRatio-dx*4*devicePixelRatio);
+   x2.closePath();x2.fillStyle='#5bc0eb';x2.fill();
+   x2.font=(9*devicePixelRatio)+'px IBM Plex Mono';
+   x2.fillText('wind',ax-14*devicePixelRatio,ay+14*devicePixelRatio)}
+  /* cars */
+  for(const car of[grayCar,brainCar]){
+    car.trail.push([car.x,car.y]);
+    if(car.trail.length>600)car.trail.shift();
+    for(let i=1;i<car.trail.length;i++){
+      const a=i/car.trail.length;
+      x2.strokeStyle=car===grayCar?
+        'rgba(154,165,177,'+(a*0.4)+')':'rgba(255,122,89,'+(a*0.5)+')';
+      x2.lineWidth=1.3*devicePixelRatio;x2.beginPath();
+      x2.moveTo(px(car.trail[i-1][0]),py(car.trail[i-1][1]));
+      x2.lineTo(px(car.trail[i][0]),py(car.trail[i][1]));x2.stroke()}
+    const x=px(car.x),y=py(car.y),h=car.psi;
+    x2.save();x2.translate(x,y);x2.rotate(-h);
+    x2.fillStyle=car.color;
+    const s=devicePixelRatio;
+    x2.beginPath();x2.moveTo(10*s,0);x2.lineTo(-7*s,5.5*s);
+    x2.lineTo(-7*s,-5.5*s);x2.closePath();x2.fill();
+    x2.restore()}
+}
+
+/* ============ ui ============ */
+function bind(id,fmt,setter){const el=document.getElementById(id),
+  vEl=document.getElementById(id+'_v');
+  el.addEventListener('input',()=>{const v=parseFloat(el.value);
+    vEl.textContent=fmt(v);setter(v)})}
+bind('kp',v=>v.toFixed(1),v=>cfg.kp=v);
+bind('kd',v=>v.toFixed(2),v=>cfg.kd=v);
+bind('vel',v=>v.toFixed(2)+' m/s',v=>cfg.v=v);
+bind('bias',v=>v.toFixed(1)+'°',v=>cfg.bias=v*Math.PI/180);
+bind('wind',v=>v.toFixed(2)+' m/s',v=>cfg.wind=v);
+
+const sw=document.getElementById('bigswitch');
+function setLearning(on){
+  learning=on;
+  sw.classList.toggle('on',on);sw.setAttribute('aria-checked',on);
+  document.getElementById('swsub').textContent=
+    on?'on — the coral car is learning':'off — both cars are plain PD';
+  logEvent('self-learning '+(on?'ON':'OFF (memory kept)'));
+}
+sw.addEventListener('click',()=>setLearning(!learning));
+sw.addEventListener('keydown',e=>{
+  if(e.key===' '||e.key==='Enter'){e.preventDefault();setLearning(!learning)}});
+document.getElementById('pause').addEventListener('click',e=>{
+  paused=!paused;e.target.textContent=paused?'Run':'Pause'});
+document.getElementById('simspeed').addEventListener('change',e=>{
+  simMul=parseFloat(e.target.value)});
+document.getElementById('resetbrain').addEventListener('click',()=>{
+  brain.resetWeights();logEvent('brain wiped — back to '+brain.n0+' blank units')});
+
+/* ============ main loop ============ */
+let lastWall=performance.now(),frame=0,acc=0;
+function tick(now){
+  const wallDt=Math.min(0.1,(now-lastWall)/1000);lastWall=now;
+  if(!paused){acc+=wallDt*simMul;
+    let steps=0;
+    while(acc>=DT_CTRL&&steps<1000){controlStep();acc-=DT_CTRL;steps++}}
+  frame++;
+  drawWorld();
+  if(frame%4===0)drawBrain();
+  if(frame%6===0&&!paused){
+    const g=rmsG.rms(),b=rmsB.rms();
+    chartData.push([g,b]);if(chartData.length>300)chartData.shift();
+    drawChart();
+    document.getElementById('simclock').textContent='t = '+simT.toFixed(1)+' s';
+    document.getElementById('rmsg').textContent=(g*100).toFixed(1)+' cm';
+    document.getElementById('rmsb').textContent=(b*100).toFixed(1)+' cm';
+    const head=document.getElementById('headline');
+    if(g>1e-6){const pct=b/g*100;
+      head.textContent=pct.toFixed(0)+'%';
+      head.style.color=pct<95?'#7ae582':(pct>110?'#ff7a59':'#dfe6ec')}
+    else head.textContent='—';
+  }
+  requestAnimationFrame(tick);
+}
+brain.init(1);
+logEvent('two identical faulty cars — flick Self-learning to give one a brain');
+requestAnimationFrame(tick);
+</script>
