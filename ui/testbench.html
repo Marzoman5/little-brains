@@ -179,8 +179,11 @@ class Brain{
     this.cap=Math.max(1024,this.n0);this.n=this.n0;
     /* every constant below derives from dt — nothing to tune per demo */
     this.td=Math.exp(-this.dt/(cfg.tauElig||0.3));  // eligibility window
-    this.leakF=0.995;    // fast-layer leak, per update — the per-step
-                         // retention is the invariant, not seconds
+    this.leakF=cfg.leak!==undefined?cfg.leak:0.995;
+                         // fast-layer leak, per update — the per-step
+                         // retention is the invariant, not seconds. A brain
+                         // shared by N streams updates N times faster, so
+                         // shared configs must raise retention accordingly.
     this.muF=0.5;this.muS=0.005;               // dimensionless (NLMS)
     this.aNorm=1-Math.exp(-0.2*this.dt);       // ctx normalisation, tau 5 s
     this.kGolgi=0.3;this.tauGolgi=0.1;
@@ -220,7 +223,7 @@ class Brain{
     /* episodic replay: sparse-sample regimes rehearse a small buffer of
        (ctx, teacher) pairs at each update — more epochs, same data */
     this.episodic=this.dt>=this.tauGolgi;
-    this.rbCap=64;this.rbN=0;this.rbI=0;
+    this.rbCap=cfg.rbCap||64;this.rbN=0;this.rbI=0;
     this.rbCtx=new Float64Array(this.rbCap*this.nCtx);
     this.rbTot=new Float64Array(this.rbCap*this.nOut);
     this.rbMask=new Uint8Array(this.rbCap*this.nOut);
@@ -1548,7 +1551,7 @@ SCENARIOS.push({
     blurb:'Two identical bouts under the neon. An all-gas brawler (coral) vs a fighter (gray) that reads wind-ups, blocks strikes, dodges grabs and throws blockers. The lower brawler carries two cerebellums: a 320-cell policy brain scoring every action by what it actually earned, and a second brain that learns to predict the enemy’s next move (watch its accuracy in the HUD). It loses round after round — flick the switch and watch it learn to block, punish recoveries, and grab the blocker. Click the ♪ for sound.',
     dt:DT,
     brainCfg:{nCtx:13,nOut:8,authority:6,tauOut:0,dt:0.1,gate:false,n0:320,
-              tauElig:0.02},
+              tauElig:0.02,leak:0.9995,rbCap:256},
     metric:{label:'Enemy HP left at round end',unit:'hp',scale:1,
             winCount:10,winSec:20},
     challenges:[
@@ -2165,7 +2168,7 @@ SCENARIOS.push({
     blurb:'Six brawlers fight six copies of the champion — and share ONE cerebellum. Every read comes from the same memory; every lesson lands in it; the instant one of them blocks a kick and it works, all six know. The top bout is the control: same brawler, no brain, losing forever. Pulses show lessons flowing into the hive mind.',
     dt:DT,
     brainCfg:{nCtx:13,nOut:8,authority:6,tauOut:0,dt:0.1,gate:false,n0:320,
-              tauElig:0.02},
+              tauElig:0.02,leak:0.9995,rbCap:512},
     metric:{label:'Enemy HP left at round end',unit:'hp',scale:1,
             winCount:20,winSec:20},
     challenges:[
