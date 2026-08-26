@@ -1,10 +1,15 @@
 # Roadmap: research rig -> publishable v1.0 library
 
-Status 2026-08-26. The science is closed (FINDINGS 1-35); the PRODUCT
-ARTIFACT does not exist yet — the brain lives inside ui/testbench.html.
-Measured today: n0:16 works well (balance 13.1%, rover 4.2%, seed 0) but
-still allocates the full 1024-unit cap (idx=4096, weights 1024/output) —
-a true small-footprint build requires the library extraction below.
+Status 2026-08-26 late (see FINDINGS 36-37): Tier 1 items 1-4 are DONE —
+`lib/littlebrains.js` (honored capacity, cfg-only seed, save/load as
+caller-owned LB02 bytes, deterministic softmath "lb2") + `lib/c/lb.c`
+verified BIT-IDENTICAL to JS via golden vectors (tools/gen_vectors.js,
+lib/c/test_vectors.c; 12/12 smoke tests in tools/test_lib.js). Item 5
+(persistence) is DONE as caller-owned bytes in both JS and C. The PIC16
+integer build `lib/c/lb16.*` is EXPERIMENTAL: mechanisms verified, not
+yet performing (finding 37 has the finish method). REMAINING before
+v1.0: testbench imports the library + full lb2 board re-baseline (next
+session's opener), then Tier 2 items 6-8 and Tier 3.
 
 ## Tier 1 — the library exists (est. 1-2 sessions)
 

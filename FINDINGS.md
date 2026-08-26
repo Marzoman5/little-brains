@@ -271,3 +271,52 @@ regressed; two mechanisms and one constant removed.
     single largest cost after V2.1), active-set-only loops (~20% fire),
     Q15 packing, NLMS-only build, fixed capacity (kills the 1024-unit
     preallocation). See docs/APPLICATIONS.md for the deployment map.
+
+## The library batch (2026-08-26 evening) — Tier 1 of the roadmap
+
+36. **The standalone library exists, and its C port is bit-identical to
+    JS.** `lib/littlebrains.js` (mathProfile "lb2"): every transcendental
+    replaced with software implementations built from the IEEE-754
+    spec-exact operation set (rational tanh, 2^k-split exp, wrapped-phase
+    sin/cos, atanh-series log, Irwin-Hall-12 gaussian for the basis) —
+    plus honored capacity (n=16 allocates 16: ~2 KB), cfg-only seeding
+    (no window globals), and persistence as CALLER-OWNED BYTES:
+    `save()` returns a versioned CRC-checked LB02 blob, `load()`
+    restores it; the library never touches storage (browser saves the
+    blob wherever it wants, a PIC writes EEPROM — same bytes). Blobs
+    refuse wrong basis seeds ("weights are coordinates of the basis")
+    and corrupt CRCs. `lib/c/lb.c` (C99, arena-allocated, no malloc, no
+    libm-transcendentals, -ffp-contract=off) reproduces the JS reference
+    BIT-FOR-BIT through three golden-vector runs on the FIRST compile:
+    4000 closed-FEL-loop steps with Autostep+oscillators+Golgi+gate —
+    including an identical 16->20 growth event — plus episodic
+    NLMS+replay+outcome and kwta configs (tools/gen_vectors.js,
+    lib/c/test_vectors.c). Smoke suite: 12/12 (tools/test_lib.js),
+    including a 16-unit brain opening its gate in a real closed loop and
+    cutting tracking error to 23% of the plain controller. Determinism
+    is now a THEOREM about conforming implementations, not an empirical
+    bet — this closes findings 29/32's plan at the library level.
+    NOT yet done: testbench still runs its own old-math BrainV2 — the
+    swap + full lb2 board re-baseline is the next session's opener.
+37. **The PIC16-class integer build taught four fixed-point lessons and
+    is not done.** lb16 (Q15/Q12/Q27+Q10, ~500 B RAM, LUT tanh, no
+    division in per-weight loops, square-compare gate with no sqrt,
+    block-floating-point AGC normalizer with no division): all
+    mechanisms run, but the closed FEL loop plateaus at rms 0.24-0.40 vs
+    the float reference's 0.076, and the gate bootstrap deadlocks.
+    Lessons, each found the hard way: (a) int16 eligibility saturates
+    and destroys credit — the trace needs its own Q-scale derived from
+    its ~15-step accumulation, not the activation's; (b) fixed-point
+    EMAs stall below their own LSB (the amp tracker sat at 1 forever) —
+    keep small EMAs in x16 precision; (c) asymmetric >> rounding drifts
+    means — round-half-up; (d) a closed gate turns FEL's DC teacher
+    into open-loop weight integration to the projection clamp
+    (gate-closed runaway) — float escapes because its gate opens before
+    runaway; the integer gate's noisier correlation doesn't. ALSO: the
+    consistent-rescaling experiments proved the integer pipeline is
+    exactly scale-invariant (three different unit conventions, identical
+    real behavior) — the arithmetic is sound; the remaining gap is
+    statistical quality, not scales. Finish method (do NOT keep tuning
+    blind): stage-wise golden vectors from lb.c — basis codes, then
+    eligibility, then NLMS deltas, then gate rho, verified one stage at
+    a time. M0+-and-up targets are served TODAY by lb.c.
