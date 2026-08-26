@@ -65,6 +65,19 @@ better classical parts strengthens the product; it never dilutes it.
 
 ## The audit I owe you: my concerns (attack these first)
 
+> STATUS 2026-08-25 (session 2): #1 RESOLVED (multi-seed bench + error
+> bars; findings 24, results/), #4 RESOLVED (Autostep audited vs paper,
+> paper-exact form tested and lost; finding 26), #5 RESOLVED (exact
+> recursion + per-component variant tested; the mix is now OFF by
+> default; finding 27), #8 RESOLVED as a design (finding 29 — native
+> Math.tanh is now OS-dependent in Chrome; implementation deferred),
+> #12 PARTIAL (in-page sweep runner + committed JSON baselines; a CLI
+> runner is blocked on installing Node). #6 sharpened by finding 28
+> (oscillators hurt balance — why?). #7 sharpened into finding 25: the
+> harm watchdog demonstrably FAILS in decision mode (maze seed 1) — this
+> is now the highest-priority open problem, since certification is the
+> product. #2 (blind scenario), #3, #9, #10, #11 remain untouched.
+
 1. **Everything is single-seed.** Every number in FINDINGS.md is one
    deterministic run. Small deltas (car 48.0 vs 48.3) are meaningless and
    nobody knows the variance of the big ones. Build multi-seed support
