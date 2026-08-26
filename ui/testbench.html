@@ -491,7 +491,11 @@ class BrainV2{
        the learning rule itself) */
     this.ruleNLMS=cfg.rule?cfg.rule==='nlms':this.episodic;
     this.muF=0.5;
-    this.mixOn=cfg.mix!==undefined?cfg.mix:!this.episodic;
+    /* learned convex fast/slow mix: OFF by default. Both the shared-teacher
+       form and Arenas-Garcia's per-component form (mixPC) lost to the plain
+       two-rate sum on the 10-seed continuous board, 2026-08-25 —
+       see FINDINGS.md. Enable via cfg.mix for study. */
+    this.mixOn=cfg.mix!==undefined?cfg.mix:false;
     this.rng=mulberry32(cfg.seed||1);
     const C=this.cap,J=this.nOut;
     this.idx=new Int32Array(C*FAN);this.wIn=new Float64Array(C*FAN);
@@ -520,6 +524,10 @@ class BrainV2{
     }
     this.mixA=new Float64Array(J);          // neutral boot: the board chose
     this.mixDenom=new Float64Array(J).fill(1e-2);  // slow earns its share
+    /* mixPC: per-component errors (Arenas-Garcia's actual structure —
+       each layer adapts with its OWN error, not the shared teacher) */
+    this.mixPC=cfg.mixPC||false;
+    this._lamJ=new Float64Array(J);this._diffJ=new Float64Array(J);
     this.prevS=new Float64Array(C);
     this.elig=new Float64Array(C);this.sAct=new Float64Array(C);
     this.lowTime=new Float64Array(C);
@@ -672,6 +680,7 @@ class BrainV2{
       let r=this.mixOn?lam*yf+(1-lam)*ys:yf+ys;
       r=Math.max(-this.clamp,Math.min(this.clamp,r));
       this.raw[j]=r;this._yf=yf;this._ys=ys;
+      this._lamJ[j]=lam;this._diffJ[j]=yf-ys;
       if(this.tauOut>this.dt)this.out[j]+=(r-this.out[j])*(this.dt/this.tauOut);
       else this.out[j]=r;
       if(learn&&this.mixOn){
@@ -705,6 +714,13 @@ class BrainV2{
       for(let j=0;j<J;j++){
         const dj=tch[j];
         if(dj===0)continue;                  // masked outputs untouched
+        let djF=dj,djS=dj;
+        if(this.mixOn&&this.mixPC){
+          /* per-component errors (paper structure): each layer sees the
+             residual of ITS OWN output, not of the mixed output */
+          djF=dj-(1-this._lamJ[j])*this._diffJ[j];
+          djS=dj+this._lamJ[j]*this._diffJ[j];
+        }
         const wfj=this.wf[j],wsj=this.ws[j],bj=this.beta[j],
               hj=this.hTr[j],vj=this.vN[j],Ej=this.energy[j],cj=this.cnt[j];
         let ep=1e-8;
@@ -727,7 +743,7 @@ class BrainV2{
           let M=0;
           for(let i=0;i<n;i++){
             const x=e[i];if(x===0)continue;
-            const dxh=dj*x*hj[i],adx=Math.abs(dxh);
+            const dxh=djF*x*hj[i],adx=Math.abs(dxh);
             const al=Math.exp(bj[i]);
             const vv=vj[i];
             vj[i]=Math.max(adx,vv+(1/this.metaTau)*al*x*x*(adx-vv));
@@ -737,6 +753,13 @@ class BrainV2{
             }
             M+=Math.exp(bj[i])*x*x;
           }
+          /* NOTE deliberate deviation from Autostep eq. (7): the alpha/M
+             normalization here is TRANSIENT (per-step), not stored. The
+             paper-exact stored version was tested 2026-08-25 and lost on
+             all four continuous scenarios (it throttles total adaptation
+             speed); the transient form keeps the effective step at the
+             NLMS stability ceiling, which is what wins in this
+             nonstationary FEL setting. See FINDINGS.md. */
           scale=M>1?1/M:1;
         }
         for(let i=0;i<n;i++){
@@ -744,9 +767,9 @@ class BrainV2{
           let al;
           if(this.ruleNLMS)al=nlmsStep;
           else{al=Math.exp(bj[i])*scale;
-            hj[i]=hj[i]*Math.max(0,1-al*x*x)+al*dj*x}
-          wfj[i]+=al*dj*x;
-          wsj[i]+=(this.ruleNLMS?(0.2+0.8*this._fam):1)*(this.muS/ep)*dj*x;
+            hj[i]=hj[i]*Math.max(0,1-al*x*x)+al*djF*x}
+          wfj[i]+=al*djF*x;
+          wsj[i]+=(this.ruleNLMS?(0.2+0.8*this._fam):1)*(this.muS/ep)*djS*x;
           const s2=sA[i]*sA[i];
           if(s2>0){Ej[i]=Math.min(Ej[i]+s2,1e4);cj[i]+=s2}
           /* projection operator: provable weight bounds */
@@ -3364,7 +3387,8 @@ function selectScenario(id){
   scen=SCENARIOS.find(s=>s.id===id);
   const BK=(window.FORCE_BRAIN==='v2'||(scen.brainCfg.v2&&window.FORCE_BRAIN!=='v1'))
     ?BrainV2:Brain;
-  brain=new BK({dt:scen.dt,seed:1+SEEDK(),...scen.brainCfg});   // brainCfg.dt may override
+  brain=new BK({dt:scen.dt,seed:1+SEEDK(),...scen.brainCfg,
+    ...(window.CFG_OVERRIDE||{})});   // brainCfg.dt may override
   loggedEvents=0;simT=0;learning=false;chartData=[];
   const N=scen.metric.winCount||
           Math.max(8,Math.round(scen.metric.winSec/scen.dt));
@@ -3525,6 +3549,7 @@ window.bench={
     window.BENCHSEED=(opts&&opts.seed)|0;
     const fb=window.FORCE_BRAIN;
     if(opts&&opts.brain)window.FORCE_BRAIN=opts.brain;
+    if(opts&&opts.cfg)window.CFG_OVERRIDE=opts.cfg;
     selectScenario(id);
     this._applyCh(opts);
     const n0=Math.round(30/scen.dt);
@@ -3536,7 +3561,7 @@ window.bench={
     const r={scenario:id,secs,seed:window.BENCHSEED,
       brainV:brain instanceof BrainV2?'v2':'v1',
       baseline:+p0.toFixed(3),...this._measure(),unit:scen.metric.unit};
-    window.BENCHSEED=0;window.FORCE_BRAIN=fb;
+    window.BENCHSEED=0;window.FORCE_BRAIN=fb;window.CFG_OVERRIDE=null;
     return r},
   /* runBlocks(id, blockSecs, nBlocks, opts): baseline 30 s, then sample
      the metric window + scenario stats after every block. Stats are
@@ -3545,6 +3570,7 @@ window.bench={
     window.BENCHSEED=(opts&&opts.seed)|0;
     const fb=window.FORCE_BRAIN;
     if(opts&&opts.brain)window.FORCE_BRAIN=opts.brain;
+    if(opts&&opts.cfg)window.CFG_OVERRIDE=opts.cfg;
     selectScenario(id);
     this._applyCh(opts);
     const n0=Math.round(30/scen.dt);
@@ -3557,7 +3583,7 @@ window.bench={
       blocks.push({block:b,...this._measure()})}
     const r={scenario:id,seed:window.BENCHSEED,blockSecs,blocks,
       brainV:brain instanceof BrainV2?'v2':'v1',unit:scen.metric.unit};
-    window.BENCHSEED=0;window.FORCE_BRAIN=fb;
+    window.BENCHSEED=0;window.FORCE_BRAIN=fb;window.CFG_OVERRIDE=null;
     return r},
   /* sweep(jobs): async queue — each job {fn:'run'|'runBlocks',args:[...]}.
      Results accumulate on window.__SWEEP while the page stays live. */

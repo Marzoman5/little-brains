@@ -1,4 +1,4 @@
-# Architecture reference — current state (V2, 2026-08-25)
+# Architecture reference — current state (V2.1-dev, 2026-08-25 evening)
 
 The single source of truth is `ui/testbench.html` (one self-contained file:
 two brain classes + nine scenarios + harness). The Python library `cereb/`
@@ -16,7 +16,10 @@ until someone back-ports BrainV2 or formally deprecates it.
   pages (superseded, kept for history).
 - `cereb/`, `sim/`, `run_*.py`, `test_acceptance.py` — Python V1 library,
   double-pendulum sim, stage experiments, acceptance tests (all pass on V1).
-- `FINDINGS.md` — the append-only findings ledger (23 entries). Read fully.
+- `FINDINGS.md` — the append-only findings ledger (29 entries). Read fully.
+- `tools/analyze_board.py`, `tools/merge_chunks.py` — sweep analysis
+  (`py tools/analyze_board.py results/board-YYYY-MM-DD.json`).
+- `results/` — committed raw multi-seed sweep JSON (regression baselines).
 - `V2-FEATURES.md` — the V2 design doc + functionality-first audit.
 - `PORTING.md` — plain-language integration/porting guide.
 
@@ -33,7 +36,7 @@ Regime switch: `episodic = dt >= 0.1`. It selects:
 |------------------|------------------------------|---------------------------|
 | sparsifier       | deterministic k-WTA (8% of n)| exact Golgi fixed point   |
 | learning rule    | Autostep (per-weight meta lr)| familiarity-scaled NLMS   |
-| fast/slow output | learned convex mix (lam)     | plain sum (mix off)       |
+| fast/slow output | plain sum (mix off — finding 27; cfg.mix/mixPC to study) |
 | oscillators      | 3 adaptive Hopf channels     | none                      |
 | replay ring      | off                          | on (rbCap, masked)        |
 | growth           | on (whiteness trigger)       | off (start big via n0)    |
@@ -58,9 +61,19 @@ basis seed (finding 22).
 
 ## Harness / bench API (browser console)
 
-- `bench.list()`; `bench.run(id, secs)` → {pct, alpha, units, nan, ...}
-  (30 s baseline then `secs` of learning; pct = brain error as % of the
-  brainless twin over the metric window).
+- `bench.list()`; `bench.run(id, secs, opts)` → {pct, alpha, units, nan,
+  stats?, ...} (30 s baseline then `secs` of learning; pct = brain error
+  as % of the brainless twin over the metric window). `opts`:
+  `{seed}` offsets EVERY RNG (brain basis + scenario streams; 0 = the
+  historical deterministic board), `{brain:'v1'|'v2'}` picks the class
+  per run, `{ch:{challengeId:value}}` overrides challenge sliders (e.g.
+  gossip `{iv:65}` = isolated), `{cfg:{...}}` merges into brainCfg (e.g.
+  `{rule:'nlms'}`, `{osc:0}`, `{mix:true}`, `{mixPC:true}`).
+- `bench.runBlocks(id, blockSecs, nBlocks, opts)` — samples the metric +
+  cumulative scenario stats() after every block (fight/hive/gossip wins).
+- `bench.sweep(jobs)` — async job queue ({fn,args,tag} each); progress on
+  `window.__SWEEP`; page stays live. `bench.stop()` aborts. Click Pause
+  first so the rAF loop doesn't burn CPU between jobs.
 - `window.FORCE_BRAIN = 'v1'|'v2'|null` — override the per-scenario class.
 - `window.TDMODE = true` — one-step bootstrap in fighter/hive teachers.
 - `window.EXPLORE = 'eps'` — force epsilon-greedy (novelty is default).
@@ -73,18 +86,29 @@ basis seed (finding 22).
   onClick?})`. Twins doctrine: gray twin = stock algorithm, coral twin =
   stock + brain; byte-identical until the switch flips.
 
-## Current benchmark numbers (V2 defaults, single seed — see concerns)
+## Current benchmark numbers (V2 defaults, 10 seeds, mean +- sd, 240 s)
 
-balance 35.0 | path 50.4 | car 48.3 | flight 20.5 | launcher 54.4 |
-maze ~100 (boundary exhibit) | fighter 90%+ from first 500 s block |
-one-mind hive 75/99/93 | gossip-20s 68/89/99 vs isolated 60/77/88
-(per-100s or per-200s win blocks; all measured in session, all committed).
+balance 33.0+-11.7 | path 59.1+-13.2 | car 39.2+-6.9 | flight 35.7+-9.4 |
+launcher 38.9+-7.0 | maze 99-160 with harm outliers (finding 25!) |
+fight winrate/500s-block 68/89/93 | one-mind hive /200s-block 78/93/95 |
+gossip-20s 64/91/93 vs isolated 56/87/89.
+V1 reference: balance 45.5+-2.1 | path 60.1+-3.6 | car 55.5+-4.3 |
+flight 32.5+-1.6 | launcher 42.3+-5.8 | maze 99.4+-2.0 | fight 66/90/90 |
+hive 76/92/92. Raw data + analyzer committed under `results/`, `tools/`.
 
 ## Known debts
 
 - Python library not at V2 parity.
 - fighter/hive/gossip carry three copy-pasted engine IIFEs.
-- No automated full-suite CI runner; results live in FINDINGS.md prose.
-- Single-seed determinism only; no variance bars anywhere.
-- `Math.tanh`/float reproducibility across JS engines unverified (matters
-  for instinct files and cross-device merging).
+- No Node.js on the dev machine — sweeps run in the in-app browser via
+  `bench.sweep`; a CLI runner (headless Node + DOM shim) is designed but
+  blocked on installing Node (ask the owner).
+- Maze harm outliers (finding 25): the gate cannot see decision-mode harm;
+  the "harmless boundary exhibit" claim is retracted until fixed.
+- Float determinism plan (finding 29): software tanh + Box-Muller
+  replacement designed, not implemented — it resets all baselines, so it
+  must be its own batch with a fresh multi-seed board.
+- Gossip fleet basis drift: `_recycle` re-wires units from each brain's
+  own RNG stream, so peer bases silently diverge over long runs, violating
+  the shared-basis precondition of finding 22. Unmeasured; investigate
+  before long-horizon gossip claims.
