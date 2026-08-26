@@ -447,6 +447,496 @@ class Brain{
     return s/this.nOut}
 }
 
+/* =====================================================================
+   BrainV2 — same skeleton (frozen sparse basis + linear readout), with:
+   - k-WTA sparsity (deterministic; replaces the Golgi ODE — audit item)
+   - projection operator: provable weight bounds (sigma-mod lineage)
+   - Autostep per-weight step sizes (Mahmood/Sutton 2012; replaces
+     NLMS + the familiarity heuristic)
+   - learned convex fast/slow mix (Arenas-Garcia 2006 universality)
+   - adaptive Hopf/phase oscillator channels (Righetti-Ijspeert 2006):
+     the brain finds its own rhythms and synthesizes sin/cos context
+   - error-directed unit recycling (RAN-flavoured; templates from the
+     worst-context ring)
+   - per-(output,unit) energy E for precision-weighted fleet merging
+   - optional tile-coded basis (basis:'tile') for the CMAC bake-off
+   V1 Brain remains above, untouched, for honest A/B benching.
+   ===================================================================== */
+class BrainV2{
+  constructor(cfg){
+    this.nCtxIn=cfg.nCtx;this.nOut=cfg.nOut;this.dt=cfg.dt;
+    this.clamp=0.5*cfg.authority;
+    this.Wbox=cfg.authority;                 // projection bound per weight
+    this.n0=cfg.n0||64;this.cap=Math.max(1024,this.n0);this.n=this.n0;
+    this.tauGolgi=0.1;
+    this.episodic=this.dt>=this.tauGolgi;
+    this.basisKind=cfg.basis||'tanh';
+    this.nOsc=cfg.osc!==undefined?cfg.osc:(this.episodic?0:3);
+    this.nCtx=this.nCtxIn+2*this.nOsc;       // internal ctx incl. oscillators
+    this.td=Math.exp(-this.dt/(cfg.tauElig||0.3));
+    this.leakF=cfg.leak!==undefined?cfg.leak:0.9995;
+    this.muS=0.005;
+    this.aNorm=1-Math.exp(-0.2*this.dt);
+    this.tauOut=cfg.tauOut!==undefined?cfg.tauOut:Math.max(0.05,2.5*this.dt);
+    this.gateTau=5.0;this.gateOn=cfg.gate!==false;
+    /* Autostep params (paper defaults) */
+    this.metaTheta=0.01;this.metaTau=1e4;this.alpha0=cfg.alpha0||0.05;
+    /* rule choice: Autostep needs dense data; sparse episodic streams do
+       better with aggressive NLMS (the per-stream doctrine, applied to
+       the learning rule itself) */
+    this.ruleNLMS=cfg.rule?cfg.rule==='nlms':this.episodic;
+    this.muF=0.5;
+    this.mixOn=cfg.mix!==undefined?cfg.mix:!this.episodic;
+    this.rng=mulberry32(cfg.seed||1);
+    const C=this.cap,J=this.nOut;
+    this.idx=new Int32Array(C*FAN);this.wIn=new Float64Array(C*FAN);
+    this.biasArr=new Float64Array(C);
+    for(let i=0;i<C;i++)this.seedUnit(i);
+    /* tile-coding tables (only used when basisKind==='tile') */
+    if(this.basisKind==='tile'){
+      this.T=12;this.tileRes=4;
+      this.tileCh=new Int32Array(this.T*3);
+      this.tileOf=new Float64Array(this.T*3);
+      for(let t=0;t<this.T*3;t++){
+        this.tileCh[t]=Math.floor(this.rng()*this.nCtx);
+        this.tileOf[t]=this.rng()}
+      this.tileIdx=new Int32Array(this.T);
+    }
+    this.mu=new Float64Array(this.nCtx);
+    this.varr=new Float64Array(this.nCtx).fill(1);
+    this.wf=[];this.ws=[];this.beta=[];this.hTr=[];this.vN=[];
+    this.energy=[];this.cnt=[];
+    for(let j=0;j<J;j++){
+      this.wf.push(new Float64Array(C));this.ws.push(new Float64Array(C));
+      this.beta.push(new Float64Array(C).fill(Math.log(this.alpha0)));
+      this.hTr.push(new Float64Array(C));this.vN.push(new Float64Array(C));
+      this.energy.push(new Float64Array(C));
+      this.cnt.push(new Float64Array(C));   // novelty counts (decision mode)
+    }
+    this.mixA=new Float64Array(J);          // neutral boot: the board chose
+    this.mixDenom=new Float64Array(J).fill(1e-2);  // slow earns its share
+    this.prevS=new Float64Array(C);
+    this.elig=new Float64Array(C);this.sAct=new Float64Array(C);
+    this.lowTime=new Float64Array(C);
+    this.out=new Float64Array(J);this.raw=new Float64Array(J);
+    this.corr=new Float64Array(J);this.xn=new Float64Array(this.nCtx);
+    this.gRU=new Float64Array(J);this.gRR=new Float64Array(J);
+    this.gUU=new Float64Array(J);this.uu0=null;
+    this.alpha=new Float64Array(J);if(!this.gateOn)this.alpha.fill(1);
+    /* oscillators: phase, omega (rad/s) */
+    this.oscPh=new Float64Array(this.nOsc);
+    this.oscW=new Float64Array(this.nOsc);
+    for(let o=0;o<this.nOsc;o++)this.oscW[o]=2*Math.PI*0.3*Math.pow(3,o);
+    this.oscK=1.5;this.tMag=0.1;
+    this.t=0;this.stepI=0;this.active=0;this.nanEvents=0;this.mass=0;
+    this.decAcc=new Float64Array(J);this.decN=0;
+    this.decEvery=Math.max(1,Math.round(0.1/this.dt));
+    this.errHist=[];this.normHist=[];this.lastGrowth=-1e9;
+    this.checkEvery=Math.max(1,Math.round(1.0/this.dt));
+    this.events=[];
+    this.rbCap=cfg.rbCap||(this.episodic?256:0);this.rbN=0;this.rbI=0;
+    if(this.rbCap){
+      this.rbCtx=new Float64Array(this.rbCap*this.nCtxIn);
+      this.rbTot=new Float64Array(this.rbCap*J);
+      this.rbMask=new Uint8Array(this.rbCap*J);
+    }
+    /* worst-context ring for directed recycling */
+    this.wcCap=8;this.wcN=0;this.wcI=0;
+    this.wcCtx=new Float64Array(this.wcCap*this.nCtx);   // normalized ctx
+    this.sTmp=new Float64Array(C);this.xnTmp=new Float64Array(this.nCtx);
+    /* sparse-data regimes want denser codes: more units share each lesson */
+    this.kFrac=this.episodic?0.25:0.08;
+    this.kwta=Math.max(4,Math.round(this.kFrac*this.n0));
+  }
+  seedUnit(i){const r=this.rng,o=i*FAN;
+    for(let k=0;k<FAN;k++){this.idx[o+k]=Math.floor(r()*this.nCtx);
+      this.wIn[o+k]=gauss(r)/Math.sqrt(FAN)}
+    this.biasArr[i]=gauss(r)*0.5}
+  reset(){for(let j=0;j<this.nOut;j++){this.wf[j].fill(0);this.ws[j].fill(0);
+      this.beta[j].fill(Math.log(this.alpha0));this.hTr[j].fill(0);
+      this.vN[j].fill(0);this.energy[j].fill(0);this.cnt[j].fill(0)}
+    this.mixA.fill(0);this.mixDenom.fill(1e-2);this.prevS.fill(0);
+    this.elig.fill(0);this.out.fill(0);this.n=this.n0;
+    this.gRU.fill(0);this.gRR.fill(0);this.gUU.fill(0);this.uu0=null;
+    this.alpha.fill(this.gateOn?0:1);this.t=0;this.stepI=0;this.mass=0;
+    this.errHist=[];this.normHist=[];this.lastGrowth=-1e9;
+    this.lowTime.fill(0);this.decAcc.fill(0);this.decN=0;
+    this.rbN=0;this.rbI=0;this.wcN=0;this.wcI=0}
+
+  /* ---- basis ------------------------------------------------------- */
+  _activate(xn){
+    const n=this.n;
+    if(this.basisKind==='tile'){
+      this.sAct.fill(0,0,n);
+      let active=0;
+      for(let t=0;t<this.T;t++){
+        const o=t*3;let hsh=t*2654435761;
+        for(let d=0;d<3;d++){
+          const v=xn[this.tileCh[o+d]];
+          const cell=Math.floor((v*0.25+0.5)*this.tileRes+this.tileOf[o+d]);
+          hsh=(Math.imul(hsh^cell,2246822519))|0}
+        const i=((hsh>>>0)%n);
+        this.tileIdx[t]=i;
+        if(this.sAct[i]===0)active++;
+        this.sAct[i]+=1;
+      }
+      this.active=active/Math.max(n,1);
+      return;
+    }
+    const k=this.kwta;
+    for(let i=0;i<n;i++){const o=i*FAN;
+      const z=this.biasArr[i]
+        +this.wIn[o]*xn[this.idx[o]]+this.wIn[o+1]*xn[this.idx[o+1]]
+        +this.wIn[o+2]*xn[this.idx[o+2]]+this.wIn[o+3]*xn[this.idx[o+3]];
+      this.sTmp[i]=Math.tanh(z)}
+    if(this.episodic){
+      /* episodic: exact Golgi fixed point (proven for sparse-sample
+         regimes; k-WTA's threshold shaving loses discrimination there) */
+      let lo=0,hi=1;
+      for(let it=0;it<24;it++){
+        const mid=(lo+hi)/2;let ssum=0;
+        for(let i=0;i<n;i++){const v=this.sTmp[i]-mid;if(v>0)ssum+=v}
+        if(ssum*0.3>mid)lo=mid;else hi=mid}
+      const inh=(lo+hi)/2;
+      let active=0;
+      for(let i=0;i<n;i++){
+        let s=this.sTmp[i]-inh;
+        if(s<0)s=0;else if(s>0)active++;
+        this.sAct[i]=s}
+      this.active=active/Math.max(n,1);
+      return;
+    }
+    /* continuous: deterministic k-WTA, s = relu(g - theta_k) */
+    /* find (k+1)-th largest via a small insertion heap (k << n) */
+    const top=BrainV2._topBuf.length>=k+1?BrainV2._topBuf:
+      (BrainV2._topBuf=new Float64Array(k+1));
+    let filled=0;
+    for(let i=0;i<n;i++){
+      const g=this.sTmp[i];
+      if(filled<k+1){
+        let p=filled++;top[p]=g;
+        while(p>0&&top[p]<top[p-1]){const tmp=top[p];top[p]=top[p-1];
+          top[p-1]=tmp;p--}
+      }else if(g>top[0]){
+        top[0]=g;let p=0;
+        while(p<k&&top[p]>top[p+1]){const tmp=top[p];top[p]=top[p+1];
+          top[p+1]=tmp;p++}
+      }
+    }
+    const theta=Math.max(0,filled>k?top[0]:0);
+    let active=0;
+    for(let i=0;i<n;i++){
+      let s=this.sTmp[i]-theta;
+      if(s<0)s=0;else if(s>0)active++;
+      this.sAct[i]=s}
+    this.active=active/Math.max(n,1);
+  }
+
+  /* ---- main step ---------------------------------------------------- */
+  step(ctx,teacher,learn){
+    const tch=(typeof teacher==='number')?[teacher]:teacher;
+    const J=this.nOut,n=this.n,a=this.aNorm,xn=this.xn;
+    /* oscillators advance every call; adapt only while learning */
+    for(let o=0;o<this.nOsc;o++)this.oscPh[o]+=this.oscW[o]*this.dt;
+    if(learn&&this.nOsc){
+      let f=0;for(let j=0;j<J;j++)f+=tch[j];f/=J;
+      this.tMag+=0.005*(Math.abs(f)-this.tMag);
+      const F=f/(this.tMag+1e-6);
+      for(let o=0;o<this.nOsc;o++){
+        const d=this.oscK*F*Math.sin(this.oscPh[o])*this.dt;
+        this.oscPh[o]-=d;this.oscW[o]-=d;
+        const lo=2*Math.PI*0.05,hi=0.8*Math.PI/this.dt;
+        if(this.oscW[o]<lo)this.oscW[o]=lo;
+        if(this.oscW[o]>hi)this.oscW[o]=hi;
+      }
+    }
+    /* normalisation: adapts only while learning (pure reads) */
+    for(let c=0;c<this.nCtxIn;c++){
+      if(learn){this.mu[c]+=a*(ctx[c]-this.mu[c]);
+        const d=ctx[c]-this.mu[c];this.varr[c]+=a*(d*d-this.varr[c])}
+      xn[c]=(ctx[c]-this.mu[c])/Math.sqrt(this.varr[c]+1e-8)}
+    for(let o=0;o<this.nOsc;o++){
+      xn[this.nCtxIn+2*o]=Math.sin(this.oscPh[o]);
+      xn[this.nCtxIn+2*o+1]=Math.cos(this.oscPh[o])}
+    this._activate(xn);
+    /* readout: learned convex mix of fast and slow layers */
+    for(let j=0;j<J;j++){
+      let yf=0,ys=0;const wfj=this.wf[j],wsj=this.ws[j],sA=this.sAct;
+      for(let i=0;i<n;i++){const s=sA[i];if(s!==0){yf+=wfj[i]*s;ys+=wsj[i]*s}}
+      const lam=this.mixOn?1/(1+Math.exp(-this.mixA[j])):1;
+      let r=this.mixOn?lam*yf+(1-lam)*ys:yf+ys;
+      r=Math.max(-this.clamp,Math.min(this.clamp,r));
+      this.raw[j]=r;this._yf=yf;this._ys=ys;
+      if(this.tauOut>this.dt)this.out[j]+=(r-this.out[j])*(this.dt/this.tauOut);
+      else this.out[j]=r;
+      if(learn&&this.mixOn){
+        /* convex-mix logit update (Arenas-Garcia), normalized */
+        const diff=yf-ys;
+        this.mixDenom[j]+=0.01*(diff*diff-this.mixDenom[j]);
+        this.mixA[j]+=0.5*tch[j]*diff*lam*(1-lam)/(this.mixDenom[j]+1e-6);
+        if(this.mixA[j]>4)this.mixA[j]=4;
+        if(this.mixA[j]<-4)this.mixA[j]=-4;
+      }
+    }
+    if(!this.gateOn)this.alpha.fill(1);
+    if(learn&&this.gateOn){
+      const ga=Math.min(0.15,this.dt/this.gateTau);
+      for(let j=0;j<J;j++){
+        this.gRU[j]+=ga*(this.raw[j]*tch[j]-this.gRU[j]);
+        this.gRR[j]+=ga*(this.raw[j]*this.raw[j]-this.gRR[j]);
+        this.gUU[j]+=ga*(tch[j]*tch[j]-this.gUU[j])}
+      if(this.uu0===null&&this.t>2*this.gateTau)this.uu0=Float64Array.from(this.gUU);
+      for(let j=0;j<J;j++){
+        const rho=this.gRU[j]/Math.sqrt(this.gRR[j]*this.gUU[j]+1e-12);
+        const harm=this.uu0!==null&&this.gUU[j]>0.7*this.uu0[j]&&rho<0.3;
+        if(harm)this.alpha[j]*=Math.max(0,1-this.dt/2);
+        else this.alpha[j]=Math.min(1,this.alpha[j]
+          +(this.dt/8)*Math.max(0,Math.min(1,(rho-0.15)/0.45)))}
+    }
+    if(learn){
+      const td=this.td,e=this.elig,sA=this.sAct;
+      for(let i=0;i<n;i++)e[i]=e[i]*td+sA[i];
+      let bad=false;
+      for(let j=0;j<J;j++){
+        const dj=tch[j];
+        if(dj===0)continue;                  // masked outputs untouched
+        const wfj=this.wf[j],wsj=this.ws[j],bj=this.beta[j],
+              hj=this.hTr[j],vj=this.vN[j],Ej=this.energy[j],cj=this.cnt[j];
+        let ep=1e-8;
+        for(let i=0;i<n;i++){const x=e[i];if(x!==0)ep+=x*x}
+        let scale=1,nlmsStep=0;
+        if(this.ruleNLMS){
+          /* familiarity-scaled NLMS (proven for sparse episodic streams:
+             novel contexts learn gently to average out interference) */
+          if(this._fam===undefined||this._famStep!==this.stepI){
+            let dot=0,na=1e-12,nb=1e-12;const sA=this.sAct,pS=this.prevS;
+            for(let i=0;i<n;i++){const av=sA[i],bv=pS[i];
+              dot+=av*bv;na+=av*av;nb+=bv*bv}
+            this._fam=Math.max(0,Math.min(1,dot/Math.sqrt(na*nb)));
+            this.prevS.set(this.sAct.subarray(0,n));
+            this._famStep=this.stepI;
+          }
+          nlmsStep=(0.2+0.8*this._fam)*this.muF/ep;
+        }else{
+          /* Autostep: adapt log step sizes, then normalized apply */
+          let M=0;
+          for(let i=0;i<n;i++){
+            const x=e[i];if(x===0)continue;
+            const dxh=dj*x*hj[i],adx=Math.abs(dxh);
+            const al=Math.exp(bj[i]);
+            const vv=vj[i];
+            vj[i]=Math.max(adx,vv+(1/this.metaTau)*al*x*x*(adx-vv));
+            if(vj[i]>1e-12){
+              bj[i]+=this.metaTheta*dxh/vj[i];
+              if(bj[i]>1)bj[i]=1;else if(bj[i]<-12)bj[i]=-12;
+            }
+            M+=Math.exp(bj[i])*x*x;
+          }
+          scale=M>1?1/M:1;
+        }
+        for(let i=0;i<n;i++){
+          const x=e[i];if(x===0)continue;
+          let al;
+          if(this.ruleNLMS)al=nlmsStep;
+          else{al=Math.exp(bj[i])*scale;
+            hj[i]=hj[i]*Math.max(0,1-al*x*x)+al*dj*x}
+          wfj[i]+=al*dj*x;
+          wsj[i]+=(this.ruleNLMS?(0.2+0.8*this._fam):1)*(this.muS/ep)*dj*x;
+          const s2=sA[i]*sA[i];
+          if(s2>0){Ej[i]=Math.min(Ej[i]+s2,1e4);cj[i]+=s2}
+          /* projection operator: provable weight bounds */
+          if(wfj[i]>this.Wbox)wfj[i]=this.Wbox;
+          else if(wfj[i]<-this.Wbox)wfj[i]=-this.Wbox;
+          if(wsj[i]>this.Wbox)wsj[i]=this.Wbox;
+          else if(wsj[i]<-this.Wbox)wsj[i]=-this.Wbox;
+          if(!Number.isFinite(wfj[i])||!Number.isFinite(wsj[i]))bad=true;
+        }
+        this.mass+=1;
+      }
+      /* leak on fast layer (sigma-modification) */
+      const lk=this.leakF;
+      if(lk<1)for(let j=0;j<J;j++){
+        const wfj=this.wf[j];
+        for(let i=0;i<n;i++)wfj[i]*=lk;
+      }
+      if(bad){this.reset();this.nanEvents++;
+        this.events.push([this.t,'NaN guard tripped — memory zeroed'])}
+      /* worst-context ring for directed recycling */
+      let dmax=0;for(let j=0;j<J;j++)dmax=Math.max(dmax,Math.abs(tch[j]));
+      if(dmax>3*this.tMag&&dmax>1e-3){
+        const o=this.wcI*this.nCtx;
+        for(let c=0;c<this.nCtx;c++)this.wcCtx[o+c]=xn[c];
+        this.wcI=(this.wcI+1)%this.wcCap;
+        if(this.wcN<this.wcCap)this.wcN++;
+      }
+      if(this.rbCap){
+        const co=this.rbI*this.nCtxIn,to=this.rbI*J;
+        for(let c=0;c<this.nCtxIn;c++)this.rbCtx[co+c]=ctx[c];
+        for(let j=0;j<J;j++){
+          this.rbTot[to+j]=this.alpha[j]*this.out[j]+tch[j];
+          this.rbMask[to+j]=tch[j]!==0?1:0}
+        this.rbI=(this.rbI+1)%this.rbCap;
+        if(this.rbN<this.rbCap)this.rbN++;
+        this._replay();
+      }
+      this._housekeeping(tch);
+    }
+    this.t+=this.dt;this.stepI++;
+    for(let j=0;j<J;j++)this.corr[j]=this.alpha[j]*this.out[j];
+    return this.corr;
+  }
+
+  /* novelty bonus for decision scoring: optimism toward basis regions this
+     output has rarely been taught in (diagonal LinUCB flavour) */
+  noveltyBonus(j){
+    let u=0;const cj=this.cnt[j],sA=this.sAct,n=this.n;
+    for(let i=0;i<n;i++){const s=sA[i];if(s!==0)u+=s*s/(1+cj[i])}
+    return Math.sqrt(u);
+  }
+
+  _forward(ctx,sOut){
+    for(let c=0;c<this.nCtxIn;c++)
+      this.xnTmp[c]=(ctx[c]-this.mu[c])/Math.sqrt(this.varr[c]+1e-8);
+    for(let o=0;o<this.nOsc;o++){
+      this.xnTmp[this.nCtxIn+2*o]=Math.sin(this.oscPh[o]);
+      this.xnTmp[this.nCtxIn+2*o+1]=Math.cos(this.oscPh[o])}
+    const saveS=this.sAct;this.sAct=sOut;
+    const saveA=this.active;
+    this._activate(this.xnTmp);
+    this.sAct=saveS;this.active=saveA;
+  }
+  _replay(){
+    if(this.rbN<8)return;
+    const n=this.n,s=this.sTmp2||(this.sTmp2=new Float64Array(this.cap));
+    for(let k=0;k<4;k++){
+      const pick=Math.floor(this.rng()*this.rbN);
+      const co=pick*this.nCtxIn,to=pick*this.nOut;
+      this._forward(this.rbCtx.subarray(co,co+this.nCtxIn),s);
+      let ep2=1e-8;for(let i=0;i<n;i++)ep2+=s[i]*s[i];
+      for(let j=0;j<this.nOut;j++){
+        if(!this.rbMask[to+j])continue;
+        let pred=0;const wfj=this.wf[j],wsj=this.ws[j];
+        for(let i=0;i<n;i++)pred+=(wfj[i]+wsj[i])*s[i];
+        const f=0.2*(this.rbTot[to+j]-pred)/ep2;
+        for(let i=0;i<n;i++)wfj[i]+=f*s[i];
+      }
+    }
+  }
+  _housekeeping(tch){
+    for(let j=0;j<this.nOut;j++)this.decAcc[j]+=tch[j];
+    this.decN++;
+    if(this.decN>=this.decEvery){
+      const row=[];for(let j=0;j<this.nOut;j++)row.push(this.decAcc[j]/this.decN);
+      this.errHist.push(row);
+      if(this.errHist.length>300)this.errHist.shift();
+      this.decAcc.fill(0);this.decN=0}
+    if(this.stepI%this.checkEvery!==0)return;
+    this.normHist.push(this.fastNorm());
+    if(this.normHist.length>11)this.normHist.shift();
+    this._maybePrune();this._maybeGrow();
+  }
+  _residStats(){
+    if(this.errHist.length<100)return[0,0];
+    const e=this.errHist,N=e.length,J=this.nOut;
+    let ms=0;for(const r of e)for(let j=0;j<J;j++)ms+=r[j]*r[j];
+    const rms=Math.sqrt(ms/N);
+    let rhoMax=0;
+    for(let j=0;j<J;j++){
+      let m=0;for(const r of e)m+=r[j];m/=N;
+      let den=1e-12;for(const r of e)den+=(r[j]-m)*(r[j]-m);
+      for(let lag=1;lag<=5;lag++){let num=0;
+        for(let i=lag;i<N;i++)num+=(e[i][j]-m)*(e[i-lag][j]-m);
+        rhoMax=Math.max(rhoMax,Math.abs(num/den))}}
+    return[rms,rhoMax];
+  }
+  _converged(){if(this.normHist.length<11)return false;
+    const now=this.normHist[10],ago=this.normHist[0];
+    return Math.abs(now-ago)<0.01*Math.max(now,1e-9)}
+  _maybeGrow(){
+    if(this.episodic||this.basisKind==='tile')return;
+    if(this.n>=this.cap||this.uu0===null&&this.gateOn)return;
+    if(this.t-this.lastGrowth<20)return;
+    if(!this._converged())return;
+    const[rms,rho]=this._residStats();
+    let rms0=0;
+    if(this.uu0)for(let j=0;j<this.nOut;j++)rms0+=this.uu0[j];
+    rms0=Math.sqrt(rms0);
+    if(rms<0.35*rms0||rho<0.15)return;
+    const nNew=Math.min(Math.max(Math.floor(this.n*0.2),4),this.cap-this.n);
+    this.n+=nNew;this.lastGrowth=this.t;
+    this.kwta=Math.max(4,Math.round(this.kFrac*this.n));
+    this.events.push([this.t,'<span class="grow">brain grew '
+      +(this.n-nNew)+' → '+this.n+'</span> (residual '+rms.toFixed(3)
+      +', autocorr '+rho.toFixed(2)+')']);
+  }
+  _maybePrune(){
+    if(this.basisKind==='tile')return;
+    let mean=0;const n=this.n;
+    for(let i=0;i<n;i++){let w=0;
+      for(let j=0;j<this.nOut;j++)w+=Math.abs(this.wf[j][i])+Math.abs(this.ws[j][i]);
+      mean+=w}
+    mean/=n;if(mean<1e-9)return;
+    let dead=0;
+    for(let i=0;i<n;i++){let w=0;
+      for(let j=0;j<this.nOut;j++)w+=Math.abs(this.wf[j][i])+Math.abs(this.ws[j][i]);
+      if(w<0.02*mean){this.lowTime[i]+=1;
+        if(this.lowTime[i]>60){this._recycle(i);dead++}}
+      else this.lowTime[i]=0}
+    if(dead>0)this.events.push([this.t,'recycled '+dead+' dead units']);
+  }
+  _recycle(i){
+    /* error-directed: half the recycles are wired onto a stored worst
+       context, bias set so the unit sits on its steep edge there */
+    this.lowTime[i]=0;this.elig[i]=0;
+    for(let j=0;j<this.nOut;j++){this.wf[j][i]=0;this.ws[j][i]=0;
+      this.beta[j][i]=Math.log(this.alpha0);this.hTr[j][i]=0;
+      this.vN[j][i]=0;this.energy[j][i]=0}
+    if(this.wcN>0&&this.rng()<0.5){
+      const pick=Math.floor(this.rng()*this.wcN)*this.nCtx;
+      /* choose the 4 channels with largest |xn| in the bad context */
+      const o=i*FAN,used=[];
+      for(let k=0;k<FAN;k++){
+        let bi=0,bv=-1;
+        for(let c=0;c<this.nCtx;c++){
+          if(used.includes(c))continue;
+          const v=Math.abs(this.wcCtx[pick+c]);
+          if(v>bv){bv=v;bi=c}}
+        used.push(bi);
+        this.idx[o+k]=bi;
+        this.wIn[o+k]=(this.wcCtx[pick+bi]>=0?1:-1)*(0.5+0.5*this.rng())
+                      /Math.sqrt(FAN);
+      }
+      let z=0;for(let k=0;k<FAN;k++)
+        z+=this.wIn[o+k]*this.wcCtx[pick+this.idx[o+k]];
+      this.biasArr[i]=-z+0.3;      // fires (on its steep edge) right there
+    }else this.seedUnit(i);
+  }
+  /* ---- fleet primitives -------------------------------------------- */
+  mergeFrom(other){
+    /* precision-weighted ATC combine of the slow layer only; CI-style
+       conservative energy update (max, not sum: no fake certainty) */
+    const n=Math.min(this.n,other.n);
+    for(let j=0;j<this.nOut;j++){
+      const wa=this.ws[j],wb=other.ws[j],Ea=this.energy[j],Eb=other.energy[j];
+      for(let i=0;i<n;i++){
+        const tot=Ea[i]+Eb[i];
+        if(tot>1e-9)wa[i]=(Ea[i]*wa[i]+Eb[i]*wb[i])/tot;
+        Ea[i]=Math.max(Ea[i],Eb[i]);
+      }
+    }
+  }
+  fastNorm(){let s=0;
+    for(let j=0;j<this.nOut;j++){const w=this.wf[j];
+      for(let i=0;i<this.n;i++)s+=w[i]*w[i]}
+    return Math.sqrt(s)}
+  slowNormPer(i){let s=0;
+    for(let j=0;j<this.nOut;j++)s+=Math.abs(this.ws[j][i]);
+    return s}
+  meanAlpha(){let s=0;for(let j=0;j<this.nOut;j++)s+=this.alpha[j];
+    return s/this.nOut}
+}
+BrainV2._topBuf=new Float64Array(0);
+
 /* ============ scenario registry ============ */
 const SCENARIOS=[];
 const C={ink:'#dfe6ec',muted:'#8b98a5',faint:'#5a6673',plain:'#9aa5b1',
@@ -488,7 +978,7 @@ SCENARIOS.push({
   id:'car',name:'Line car',
   blurb:'Two identical cars with a crooked wheel and a crosswind. The coral one learns the track, the faults, and the corners — from what its own steering reflex keeps having to do.',
   dt:DT,
-  brainCfg:{nCtx:12,nOut:1,authority:1.2},
+  brainCfg:{nCtx:12,nOut:1,authority:1.2,v2:true},
   metric:{label:'Distance off the line',unit:'cm',scale:100,winSec:32},
   challenges:[
     {id:'bias',label:'crooked wheel',min:-12,max:12,step:0.5,value:6,
@@ -670,7 +1160,7 @@ SCENARIOS.push({
     }
     SCENARIOS.push({
       id:o.id, name:o.name, blurb:o.blurb, dt:DT,
-      brainCfg:{nCtx:12,nOut:2,authority:UMAX},
+      brainCfg:{nCtx:12,nOut:2,authority:UMAX,v2:true},
       metric:{label:'Tracking error',unit:'deg',scale:57.2958,winSec:10},
       challenges:[
         {id:'dist',label:'Disturbance',min:0,max:10,step:0.5,value:o.defDist,
@@ -777,7 +1267,7 @@ SCENARIOS.push({
     name:'Flight',
     blurb:'Two planes fly the same looping terrain-following route through unmodeled, position-locked updrafts with a miscalibrated elevator. Gray = plain stock controller (it lags the terrain and drifts); coral = same controller + brain.',
     dt: DT,
-    brainCfg:{nCtx:12, nOut:1, authority:1},
+    brainCfg:{nCtx:12, nOut:1, authority:1, v2:true},
     metric:{label:'Altitude error', unit:'m', scale:1, winSec:20},
     challenges:[
       {id:'gust', label:'Gust strength', min:0, max:2, step:0.05, value:1,
@@ -975,7 +1465,7 @@ SCENARIOS.push({
     name:'Launcher',
     blurb:'Each round both twins fire one shell at a flagged target through air drag and a shifting wind that the stock vacuum-ballistics aim ignores. Gray = plain stock controller (lands short and drifts); coral = same controller + brain, learning an aim correction from every miss.',
     dt:DT,
-    brainCfg:{nCtx:5,nOut:1,authority:0.3,tauOut:0,dt:2.0},
+    brainCfg:{nCtx:5,nOut:1,authority:0.3,tauOut:0,dt:2.0,v2:true},
     metric:{label:'Miss distance',unit:'m',scale:1,winCount:20,winSec:20},
     challenges:[
       {id:'wind',label:'Wind strength',min:0,max:2,step:0.05,value:1,
@@ -1305,7 +1795,7 @@ SCENARIOS.push({
     name:'Maze',
     blurb:'The boundary exhibit. Two walkers race the same fresh maze every episode; coral carries a brain that measurably learns what a dead-end mouth looks like — yet barely gains, because maze waste comes from deep branches no local pattern can predict. The brain can only learn what its context can see.',
     dt:0.02,
-    brainCfg:{nCtx:12, nOut:1, authority:4, tauOut:0, dt:2.0},
+    brainCfg:{nCtx:12, nOut:1, authority:4, tauOut:0, dt:2.0, v2:true},
     metric:{label:'Wasted steps', unit:'%', scale:100, winCount:8, winSec:20},
     challenges:[
       { id:'size', label:'maze size', min:11, max:31, step:2, value:23,
@@ -1551,7 +2041,7 @@ SCENARIOS.push({
     blurb:'Two identical bouts under the neon. An all-gas brawler (coral) vs a fighter (gray) that reads wind-ups, blocks strikes, dodges grabs and throws blockers. The lower brawler carries two cerebellums: a 320-cell policy brain scoring every action by what it actually earned, and a second brain that learns to predict the enemy’s next move (watch its accuracy in the HUD). It loses round after round — flick the switch and watch it learn to block, punish recoveries, and grab the blocker. Click the ♪ for sound.',
     dt:DT,
     brainCfg:{nCtx:13,nOut:8,authority:6,tauOut:0,dt:0.1,gate:false,n0:320,
-              tauElig:0.02,leak:0.9995,rbCap:256},
+              tauElig:0.02,leak:0.9995,rbCap:256,v2:true},
     metric:{label:'Enemy HP left at round end',unit:'hp',scale:1,
             winCount:10,winSec:20},
     challenges:[
@@ -1613,17 +2103,8 @@ SCENARIOS.push({
             predLastCtx=ctxG;predLastP=predP;
           }
           if(!busy(B.L)){
-            if(learning&&lastCtx){
-              // dense shaping: blocking their hit is good, getting your
-              // own attack blocked is wasted tempo
-              const r=B.dmg[0]-B.dmg[1]-0.03+0.5*B.blk[0]-0.5*B.blk[1];
-              const tv=ZERO8.slice();tv[lastAct]=r-lastScore;
-              brain.step(lastCtx,tv,true);
-            }
-            B.dmg=[0,0];B.blk=[0,0];
             const base=loserAI(B.L,B.G,B.rngL);
             const ctx=buildCtx(B.L,B.G);
-            const sc=learning?brain.step(ctx,ZERO8,false):ZERO8;
             const valid=[];
             for(let j=0;j<8;j++){
               const a=ACTIONS[j];
@@ -1631,18 +2112,37 @@ SCENARIOS.push({
               if(a==='jump'&&B.L.y>0)continue;
               valid.push(j);
             }
+            if(learning&&lastCtx){
+              // dense shaping: blocking their hit is good, getting your
+              // own attack blocked is wasted tempo
+              let r=B.dmg[0]-B.dmg[1]-0.03+0.5*B.blk[0]-0.5*B.blk[1];
+              if(window.TDMODE){                  // bootstrapped credit:
+                const nxt=brain.step(ctx,ZERO8,false);  // target pre-update
+                let mx=-1e9;
+                for(const j of valid)if(nxt[j]>mx)mx=nxt[j];
+                r+=0.7*mx}
+              // delta = target - CURRENT prediction of the taught pair
+              const cur=brain.step(lastCtx,ZERO8,false);
+              const tv=ZERO8.slice();tv[lastAct]=r-cur[lastAct];
+              brain.step(lastCtx,tv,true);
+            }
+            // choice uses post-teach scores: acting on stale values loses
+            const sc=learning?brain.step(ctx,ZERO8,false):ZERO8;
+            B.dmg=[0,0];B.blk=[0,0];
             // explore hard while losing, barely while winning
             const wr=recent.length?
               recent.filter(Boolean).length/recent.length:0.5;
             const eps=0.04+0.12*Math.max(0,0.55-wr);
+            const useNov=learning&&window.EXPLORE!=='eps'&&!!brain.noveltyBonus;
             let bi=valid[0],bs=-Infinity;
-            if(learning&&B.rngL()<eps){
+            if(learning&&!useNov&&B.rngL()<eps){
               bi=valid[(B.rngL()*valid.length)|0];
             }else{
               for(const j of valid){
                 // sticky argmax: switching actions needs real evidence,
                 // so estimate noise can't dither the policy
-                const s=(ACTIONS[j]===base?0.15:0)+(j===lastAct?0.10:0)+sc[j];
+                let s=(ACTIONS[j]===base?0.15:0)+(j===lastAct?0.10:0)+sc[j];
+                if(useNov)s+=0.5*brain.noveltyBonus(j);
                 if(s>bs){bs=s;bi=j}
               }
             }
@@ -2168,7 +2668,7 @@ SCENARIOS.push({
     blurb:'Six brawlers fight six copies of the champion — and share ONE cerebellum. Every read comes from the same memory; every lesson lands in it; the instant one of them blocks a kick and it works, all six know. The top bout is the control: same brawler, no brain, losing forever. Pulses show lessons flowing into the hive mind.',
     dt:DT,
     brainCfg:{nCtx:13,nOut:8,authority:6,tauOut:0,dt:0.1,gate:false,n0:320,
-              tauElig:0.02,leak:0.9995,rbCap:512},
+              tauElig:0.02,leak:0.9995,rbCap:512,v2:true},
     metric:{label:'Enemy HP left at round end',unit:'hp',scale:1,
             winCount:20,winSec:20},
     challenges:[
@@ -2200,16 +2700,22 @@ SCENARIOS.push({
           if(B.state!=='fight')continue;
           applyAction(B.G,B.L,generalAI(B.G,B.L,B.rngG));
           if(busy(B.L))continue;
+          const base=loserAI(B.L,B.G,B.rngL);
+          const ctx=buildCtx(B.L,B.G);
           if(learning&&B.lastCtx){
-            const r=B.dmg[0]-B.dmg[1]-0.03+0.5*B.blk[0]-0.5*B.blk[1];
-            const tv=ZERO8.slice();tv[B.lastAct]=r-B.lastScore;
+            let r=B.dmg[0]-B.dmg[1]-0.03+0.5*B.blk[0]-0.5*B.blk[1];
+            if(window.TDMODE){
+              const nxt=brain.step(ctx,ZERO8,false);
+              let mx=-1e9;
+              for(let j=0;j<8;j++)if(nxt[j]>mx)mx=nxt[j];
+              r+=0.7*mx}
+            const cur=brain.step(B.lastCtx,ZERO8,false);
+            const tv=ZERO8.slice();tv[B.lastAct]=r-cur[B.lastAct];
             brain.step(B.lastCtx,tv,true);        // lesson -> the hive mind
             if(Math.abs(tv[B.lastAct])>=1.2)pulses.push({k,age:0});
           }
-          B.dmg=[0,0];B.blk=[0,0];
-          const base=loserAI(B.L,B.G,B.rngL);
-          const ctx=buildCtx(B.L,B.G);
           const sc=learning?brain.step(ctx,ZERO8,false):ZERO8;
+          B.dmg=[0,0];B.blk=[0,0];
           const valid=[];
           for(let j=0;j<8;j++){
             const a=ACTIONS[j];
@@ -2217,12 +2723,14 @@ SCENARIOS.push({
             if(a==='jump'&&B.L.y>0)continue;
             valid.push(j);
           }
+          const useNov=learning&&window.EXPLORE!=='eps'&&!!brain.noveltyBonus;
           let bi=valid[0],bs=-Infinity;
-          if(learning&&B.rngL()<eps){
+          if(learning&&!useNov&&B.rngL()<eps){
             bi=valid[(B.rngL()*valid.length)|0];
           }else{
             for(const j of valid){
-              const s=(ACTIONS[j]===base?0.15:0)+(j===B.lastAct?0.10:0)+sc[j];
+              let s=(ACTIONS[j]===base?0.15:0)+(j===B.lastAct?0.10:0)+sc[j];
+              if(useNov)s+=0.5*brain.noveltyBonus(j);
               if(s>bs){bs=s;bi=j}
             }
           }
@@ -2395,6 +2903,433 @@ SCENARIOS.push({
 })();
 
 
+(()=>{
+  // ======= GOSSIP FIGHT — six brains that merge when fighters meet =======
+  function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
+    let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+    return((t^t>>>14)>>>0)/4294967296}}
+  const DT=0.02, DEC=5, SPEED=2.6, ARENA=10, BODY=0.55;
+  const ATK={punch:{range:1.35,dmg:1,  wind:0.22,rec:0.32,cd:0.5},
+             kick: {range:1.75,dmg:1.5,wind:0.40,rec:0.48,cd:0.9},
+             slam: {range:2.30,dmg:3,  wind:0.74,rec:0.95,cd:2.6},
+             grab: {range:0.95,dmg:1.5,wind:0.32,rec:0.55,cd:1.5}};
+  const ACTIONS=['advance','retreat','jump','punch','kick','slam','grab','block'];
+  const ZERO8=[0,0,0,0,0,0,0,0];
+  const N=6;
+
+  function mkF(x,dir){return{x,y:0,vy:0,vx:0,dir,hp:10,act:'idle',ph:0,cd:0,
+    struck:false,flash:0,spark:0,walkPh:0,stun:0,thrown:null,ko:0}}
+  function busy(f){return f.stun>0||f.thrown||(f.act!=='idle'&&f.act!=='walk')}
+  function windLeft(f){const a=ATK[f.act];return a?Math.max(0,a.wind-f.ph):99}
+  function mkBout(seed){return{L:mkF(2.8,1),G:mkF(7.2,-1),
+    rngL:mulberry32(seed),rngG:mulberry32(seed+101),
+    winsL:0,winsG:0,lastDeficit:8,roundT:0,round:1,
+    state:'intro',stateT:0.6,dmg:[0,0],blk:[0,0],
+    lastCtx:null,lastAct:-1,brain:null,recent:[]}}
+
+  function strike(f,opp,bout,name){
+    const a=ATK[name],d=Math.abs(opp.x-f.x);
+    if(d>a.range)return;
+    if(name==='grab'){
+      if(opp.y>0.3||opp.thrown)return;
+      opp.hp=Math.max(0,opp.hp-a.dmg);
+      bout.dmg[f===bout.L?0:1]+=a.dmg;
+      const land=Math.max(0.6,Math.min(ARENA-0.6,
+        f.x-Math.sign(opp.x-f.x)*1.25));
+      opp.thrown={t:0,x0:opp.x,x1:land,dur:0.42};
+      opp.act='idle';opp.ph=0;opp.flash=0.3;
+      return;
+    }
+    if(opp.act==='block'){opp.spark=0.25;f.ph-=0.15;
+      bout.blk[opp===bout.L?0:1]++;return}
+    if(opp.y>0.3&&name!=='slam')return;
+    opp.hp=Math.max(0,opp.hp-a.dmg);
+    opp.flash=0.3;opp.vx=Math.sign(opp.x-f.x)*(name==='slam'?4:1.6);
+    bout.dmg[f===bout.L?0:1]+=a.dmg;
+  }
+  function tickFighter(f,opp,bout){
+    f.flash=Math.max(0,f.flash-DT);f.spark=Math.max(0,f.spark-DT);
+    f.cd=Math.max(0,f.cd-DT);
+    if(f.thrown){const th=f.thrown;th.t+=DT;
+      const u=Math.min(1,th.t/th.dur);
+      f.x=th.x0+(th.x1-th.x0)*u;f.y=1.4*Math.sin(Math.PI*u);
+      if(u>=1){f.thrown=null;f.y=0;f.stun=0.55}
+      return}
+    if(f.stun>0){f.stun-=DT;if(f.stun<=0)f.act='idle';return}
+    if(f.y>0||f.vy!==0){
+      f.vy-=22*DT;f.y=Math.max(0,f.y+f.vy*DT);f.x+=f.vx*DT;
+      if(f.y<=0&&f.vy<0){f.y=0;f.vy=0;f.vx=0;if(f.act==='jump')f.act='idle'}
+    }else{f.x+=f.vx*DT;f.vx*=0.82}
+    if(ATK[f.act]){
+      f.ph+=DT;const a=ATK[f.act];
+      if(!f.struck&&f.ph>=a.wind){f.struck=true;strike(f,opp,bout,f.act)}
+      if(f.ph>=a.wind+a.rec){f.act='idle';f.ph=0}
+    }else if(f.act==='block'){
+      f.ph+=DT;if(f.ph>=0.38){f.act='idle';f.ph=0}
+    }else if(f.act==='walk'){f.walkPh+=DT*7}
+    f.x=Math.max(0.5,Math.min(ARENA-0.5,f.x));
+  }
+  function collide(a,b){
+    if(a.y>0.25||b.y>0.25||a.thrown||b.thrown)return;
+    const d=b.x-a.x;
+    if(Math.abs(d)<BODY){
+      const push=(BODY-Math.abs(d))/2*Math.sign(d||1);
+      a.x-=push;b.x+=push;
+      a.x=Math.max(0.5,Math.min(ARENA-0.5,a.x));
+      b.x=Math.max(0.5,Math.min(ARENA-0.5,b.x));
+    }
+  }
+  function applyAction(f,opp,act){
+    if(busy(f))return;
+    f.act='idle';f.dir=Math.sign(opp.x-f.x)||f.dir;
+    if(act==='advance'){f.x+=f.dir*SPEED*DT*DEC;f.act='walk'}
+    else if(act==='retreat'){f.x-=f.dir*SPEED*DT*DEC*0.85;f.act='walk'}
+    else if(act==='jump'){if(f.y===0){f.vy=6.9;f.vx=f.dir*2.3;f.act='jump'}}
+    else if(act==='block'){f.act='block';f.ph=0}
+    else if(ATK[act]){if(f.cd<=0){f.act=act;f.ph=0;f.struck=false;f.cd=ATK[act].cd}}
+    if(f.act!=='walk')f.walkPh=0;
+  }
+  let blockSkill=0.85;
+  function generalAI(self,opp,rng){
+    const d=Math.abs(opp.x-self.x);
+    const ow=windLeft(opp);
+    if(!busy(self)&&opp.act==='grab'&&ow<0.3&&d<1.3)
+      return rng()<0.5?'jump':'retreat';
+    if(!busy(self)&&ATK[opp.act]&&opp.act!=='grab'&&ow<0.30
+       &&d<=ATK[opp.act].range+0.4&&rng()<blockSkill)return'block';
+    if(!busy(self)&&self.cd<=0){
+      if(opp.act==='block'&&d<=0.95&&rng()<0.30)return'grab';
+      if(ATK[opp.act]&&opp.ph>ATK[opp.act].wind&&d<=1.75)
+        return d<=1.35?'punch':'kick';
+      if(opp.stun>0&&d<=1.75)return d<=1.35?'punch':'kick';
+      if(d<=1.35)return rng()<0.6?'punch':'kick';
+      if(d<=1.75)return rng()<0.55?'kick':'advance';
+      if(d<=2.3&&busy(opp)&&rng()<0.4)return'slam';
+    }
+    if(d>1.5)return'advance';
+    if(self.hp<opp.hp-2&&rng()<0.18)return'retreat';
+    if(rng()<0.05)return'jump';
+    return d>1.2?'advance':'retreat';
+  }
+  function loserAI(self,opp,rng){
+    const d=Math.abs(opp.x-self.x);
+    if(!busy(self)&&self.cd<=0){
+      if(rng()<0.12)return'slam';
+      if(d<=1.6)return'punch';
+    }
+    return'advance';
+  }
+  function buildCtx(self,opp){
+    const d=Math.abs(opp.x-self.x);
+    const oa=ATK[opp.act];
+    return[d,
+      oa?windLeft(opp):-0.5,
+      oa?oa.range:0,
+      oa&&opp.ph>oa.wind?(oa.wind+oa.rec-opp.ph):-0.5,
+      opp.act==='block'?1:-1,
+      (opp.y>0.3||opp.thrown)?1:-1,
+      self.cd,opp.cd,
+      self.hp-opp.hp,
+      opp.stun>0?1:-1,
+      d<=1.35?1:-1, d<=1.75?1:-1, d<=0.95?1:-1];
+  }
+
+  let control=null,swarm=[],tick=0,pending=[],meets=[],meetIv=20,
+      meetRng=null,nextMeet=0,meetCount=0;
+  window.__gossip={get control(){return control},get swarm(){return swarm},
+    get meets(){return meetCount}};
+
+  function endRound(bout){
+    if(bout.G.hp<=0)bout.winsL++;
+    else if(bout.L.hp<=0)bout.winsG++;
+    bout.lastDeficit=bout.G.hp;
+    bout.state='ko';bout.stateT=0.9;
+    if(bout.L.hp<=0)bout.L.ko=1;else if(bout.G.hp<=0)bout.G.ko=1;
+  }
+  function newRound(bout){
+    bout.L=mkF(2.8,1);bout.G=mkF(7.2,-1);
+    bout.roundT=0;bout.round++;bout.dmg=[0,0];bout.blk=[0,0];
+  }
+  function boutFrame(bout){
+    if(bout.state!=='fight'){
+      bout.stateT-=DT;
+      if(bout.stateT<=0){
+        if(bout.state==='ko'){newRound(bout);bout.state='intro';
+          bout.stateT=0.6}
+        else bout.state='fight'}
+      return false}
+    bout.roundT+=DT;
+    tickFighter(bout.L,bout.G,bout);
+    tickFighter(bout.G,bout.L,bout);
+    collide(bout.L,bout.G);
+    return true;
+  }
+  function mergePair(A,B){
+    /* precision-weighted, slow-layer only, CI-conservative energy */
+    const a=A.brain,b=B.brain,n=Math.min(a.n,b.n);
+    for(let j=0;j<a.nOut;j++){
+      /* homogeneous fleet (identical plants): both layers travel.
+         Heterogeneous fleets would merge ws only (plant-specific wf). */
+      const Ea=a.energy[j],Eb=b.energy[j];
+      for(const key of ['ws','wf']){
+        const wa=a[key][j],wb=b[key][j];
+        for(let i=0;i<n;i++){
+          const tot=Ea[i]+Eb[i];
+          if(tot>1e-9){
+            const m=(Ea[i]*wa[i]+Eb[i]*wb[i])/tot;
+            wa[i]=m;wb[i]=m;
+          }
+        }
+      }
+      for(let i=0;i<n;i++){
+        const e=Math.max(Ea[i],Eb[i]);Ea[i]=e;Eb[i]=e;
+      }
+    }
+    meetCount++;
+  }
+
+  SCENARIOS.push({
+    id:'gossip',name:'Gossip fight',
+    blurb:'The decentralized hive: six brawlers, six SEPARATE brains — but when two of them "meet" (every merge interval), they exchange consolidated skill, precision-weighted so hard-won lessons beat idle opinions. Set the interval to "never" to see six isolated learners; shrink it and watch experience compound. Top bout: the brainless control.',
+    dt:DT,
+    brainCfg:{nCtx:13,nOut:8,authority:6,tauOut:0,dt:0.1,gate:false,n0:320,
+              tauElig:0.02,leak:0.9995,rbCap:256,v2:true},
+    metric:{label:'Enemy HP left at round end',unit:'hp',scale:1,
+            winCount:20,winSec:20},
+    challenges:[
+      {id:'iv',label:'merge interval',min:5,max:65,step:5,value:20,
+       fmt:v=>v>60?'never':v+' s',apply:v=>{meetIv=v>60?1e9:v}},
+      {id:'react',label:'enemy reflexes',min:0,max:1,step:0.05,value:0.85,
+       fmt:v=>(v*100).toFixed(0)+'%',apply:v=>{blockSkill=v}},
+    ],
+    init(){
+      control=mkBout(11);
+      swarm=[];meetRng=mulberry32(77);nextMeet=null;meetCount=0;
+      for(let k=0;k<N;k++){
+        const b=mkBout(300+k*17);
+        b.brain=k===0?brain:new BrainV2({nCtx:13,nOut:8,authority:6,
+          tauOut:0,dt:0.1,gate:false,n0:320,tauElig:0.02,leak:0.9995,
+          rbCap:256,seed:1});   // SAME basis seed: fusability's precondition
+        swarm.push(b);
+      }
+      tick=0;pending=[];meets=[];
+    },
+    step(hb,learning){
+      tick++;
+      boutFrame(control);
+      for(const bout of swarm)boutFrame(bout);
+      for(const m of meets)m.age+=DT;
+      meets=meets.filter(m=>m.age<0.6);
+      /* rendezvous: a seeded random pair merges every meetIv seconds */
+      if(learning&&nextMeet===null)nextMeet=tick*DT+meetIv;
+      if(learning&&tick*DT>=nextMeet){
+        nextMeet+=meetIv;
+        const a=Math.floor(meetRng()*N);
+        let b=Math.floor(meetRng()*(N-1));if(b>=a)b++;
+        mergePair(swarm[a],swarm[b]);
+        meets.push({a,b,age:0});
+      }
+      if(tick%DEC===0){
+        if(control.state==='fight'){
+          applyAction(control.G,control.L,
+            generalAI(control.G,control.L,control.rngG));
+          applyAction(control.L,control.G,
+            loserAI(control.L,control.G,control.rngL));
+        }
+        for(let k=0;k<N;k++){
+          const B=swarm[k],br=B.brain;
+          if(B.state!=='fight')continue;
+          applyAction(B.G,B.L,generalAI(B.G,B.L,B.rngG));
+          if(busy(B.L))continue;
+          const base=loserAI(B.L,B.G,B.rngL);
+          const ctx=buildCtx(B.L,B.G);
+          const valid=[];
+          for(let j=0;j<8;j++){
+            const a=ACTIONS[j];
+            if(ATK[a]&&B.L.cd>0)continue;
+            if(a==='jump'&&B.L.y>0)continue;
+            valid.push(j);
+          }
+          if(learning&&B.lastCtx){
+            const r=B.dmg[0]-B.dmg[1]-0.03+0.5*B.blk[0]-0.5*B.blk[1];
+            const cur=br.step(B.lastCtx,ZERO8,false);
+            const tv=ZERO8.slice();tv[B.lastAct]=r-cur[B.lastAct];
+            br.step(B.lastCtx,tv,true);
+          }
+          const sc=learning?br.step(ctx,ZERO8,false):ZERO8;
+          B.dmg=[0,0];B.blk=[0,0];
+          const wr=B.recent.length?
+            B.recent.filter(Boolean).length/B.recent.length:0.5;
+          const eps=0.04+0.12*Math.max(0,0.55-wr);
+          const useNov=learning&&window.EXPLORE!=='eps';
+          let bi=valid[0],bs=-Infinity;
+          if(learning&&!useNov&&B.rngL()<eps){
+            bi=valid[(B.rngL()*valid.length)|0];
+          }else{
+            for(const j of valid){
+              let s=(ACTIONS[j]===base?0.15:0)+(j===B.lastAct?0.10:0)+sc[j];
+              if(useNov)s+=0.5*br.noveltyBonus(j);
+              if(s>bs){bs=s;bi=j}
+            }
+          }
+          B.lastCtx=ctx;B.lastAct=bi;
+          applyAction(B.L,B.G,ACTIONS[bi]);
+        }
+      }
+      if(control.state==='fight'&&
+         (control.L.hp<=0||control.G.hp<=0||control.roundT>60)){
+        endRound(control);control.dmg=[0,0];control.blk=[0,0];
+      }
+      for(const B of swarm){
+        if(B.state==='fight'&&(B.L.hp<=0||B.G.hp<=0||B.roundT>60)){
+          if(learning&&B.lastCtx){
+            const r=(B.G.hp<=0?3:-3)+B.dmg[0]-B.dmg[1]
+                    +0.5*B.blk[0]-0.5*B.blk[1];
+            const cur=B.brain.step(B.lastCtx,ZERO8,false);
+            const tv=ZERO8.slice();tv[B.lastAct]=r-cur[B.lastAct];
+            B.brain.step(B.lastCtx,tv,true);
+          }
+          B.recent.push(B.G.hp<=0);if(B.recent.length>10)B.recent.shift();
+          B.lastCtx=null;B.lastAct=-1;
+          endRound(B);
+          pending.push({ep:control.lastDeficit,eb:B.lastDeficit});
+        }
+      }
+      return pending.length?pending.shift():null;
+    },
+    draw(g,W,H){
+      const dpr=devicePixelRatio||1;
+      const topH=H*0.30, gridH=H-topH;
+      drawArenaG(g,control,8*dpr,4*dpr,W-16*dpr,topH-8*dpr,dpr,
+        'CONTROL — NO BRAIN',true);
+      g.strokeStyle='#2e3945';g.lineWidth=dpr;
+      g.beginPath();g.moveTo(0,topH);g.lineTo(W,topH);g.stroke();
+      const cols=3,rows=2;
+      const cw=(W-16*dpr)/cols, ch=(gridH-30*dpr)/rows;
+      const cxy=k=>[8*dpr+(k%cols)*cw+cw/2, topH+8*dpr+((k/cols)|0)*ch+ch/2];
+      let tw=0,tl=0;
+      for(let k=0;k<swarm.length;k++){
+        const cx=8*dpr+(k%cols)*cw, cy=topH+8*dpr+((k/cols)|0)*ch;
+        drawArenaG(g,swarm[k],cx+3*dpr,cy+3*dpr,cw-6*dpr,ch-6*dpr,dpr,
+          'B'+(k+1),false);
+        tw+=swarm[k].winsL;tl+=swarm[k].winsG;
+      }
+      /* meeting links */
+      for(const m of meets){
+        const al=1-m.age/0.6;
+        const[ax,ay]=cxy(m.a),[bx,by]=cxy(m.b);
+        g.strokeStyle='rgba(122,229,130,'+(al*0.8)+')';
+        g.lineWidth=2*dpr;
+        g.beginPath();g.moveTo(ax,ay);g.lineTo(bx,by);g.stroke();
+        g.fillStyle='rgba(122,229,130,'+al+')';
+        g.font=(10*dpr)+'px IBM Plex Mono';g.textAlign='center';
+        g.fillText('sync',(ax+bx)/2,(ay+by)/2-4*dpr);
+      }
+      g.font=(11*dpr)+'px IBM Plex Mono';g.textAlign='center';
+      g.fillStyle='#ff7a59';
+      g.fillText('GOSSIP '+tw+' — '+tl+'   ·   control '
+        +control.winsL+' — '+control.winsG+'   ·   '+meetCount+' meetings',
+        W/2,H-8*dpr);
+    }
+  });
+
+  /* compact arena renderer (gossip flavour) */
+  function limb(g,x1,y1,x2,y2,bend,side){
+    const mx=(x1+x2)/2,my=(y1+y2)/2;
+    const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1;
+    const jx=mx+(-dy/L)*bend*side,jy=my+(dx/L)*bend*side;
+    g.beginPath();g.moveTo(x1,y1);g.lineTo(jx,jy);g.lineTo(x2,y2);g.stroke();
+  }
+  function pose(f,t){
+    const p={head:1.62,hip:0.92,sh:1.38,lean:0,
+      aF:[0.34,1.06],aB:[-0.30,1.02],lF:[0.26,0],lB:[-0.26,0],
+      bendA:0.10,bendL:0.08,crouch:0};
+    const a=ATK[f.act];
+    if(f.ko){p.head=0.28;p.hip=0.16;p.sh=0.24;p.lean=0.9;
+      p.aF=[0.7,0.05];p.aB=[-0.5,0.05];p.lF=[1.0,0];p.lB=[0.6,0];return p}
+    if(f.stun>0){p.lean=Math.sin(t*18)*0.1;p.head-=0.1;p.crouch=0.12;
+      p.aF=[0.4,0.7];p.aB=[-0.4,0.7];return p}
+    if(f.thrown){p.lean=1.2;p.lF=[0.5,0.4];p.lB=[-0.3,0.5];return p}
+    if(f.act==='walk'){
+      const s=Math.sin(f.walkPh),c=Math.cos(f.walkPh);
+      p.lean=0.10;
+      p.lF=[0.30+0.22*s,Math.max(0,0.10*c)];
+      p.lB=[-0.30-0.22*s,Math.max(0,-0.10*c)];
+      p.aF=[0.30-0.18*s,1.02];p.aB=[-0.30+0.18*s,1.02];
+    }else if(f.act==='block'){p.aF=[0.36,1.34];p.aB=[0.30,1.14];p.crouch=0.08}
+    else if(f.act==='jump'){p.lF=[0.24,0.42];p.lB=[-0.20,0.36]}
+    else if(a){
+      const w=Math.min(1,f.ph/a.wind),post=f.ph>a.wind;
+      if(f.act==='punch'){p.aF=post?[0.86,1.36]:[-0.18-0.22*w,1.28];
+        p.lean=post?0.16:-0.06}
+      else if(f.act==='kick'){p.lF=post?[0.92,0.80]:[-0.12,0.18];
+        p.lean=post?0.12:-0.10}
+      else if(f.act==='slam'){
+        if(!post){p.aF=[0.12,1.9];p.aB=[-0.12,1.9];p.lean=-0.14}
+        else{p.aF=[0.66,0.62];p.aB=[0.52,0.70];p.lean=0.34;p.crouch=0.18}}
+      else if(f.act==='grab'){p.aF=post?[0.7,1.15]:[0.1+0.3*w,1.2];
+        p.lean=post?0.22:0.05}
+    }
+    return p;
+  }
+  function drawFighterG(g,f,X,Y,sc,col,dpr,t){
+    const dir=f.dir||1,p=pose(f,t),cr=p.crouch;
+    const x=v=>X(f.x)+dir*v*sc, y=v=>Y(f.y+v*(1-cr));
+    g.strokeStyle=col;g.fillStyle=col;
+    g.lineWidth=Math.max(1.5,2.4*sc/40)*dpr;g.lineCap='round';
+    g.beginPath();g.moveTo(x(p.lean*0.35),y(p.head-0.15));
+    g.lineTo(x(0),y(p.hip));g.stroke();
+    limb(g,x(0),y(p.hip),x(p.lF[0]),Y(f.y+p.lF[1]),p.bendL*sc,-dir);
+    limb(g,x(0),y(p.hip),x(p.lB[0]),Y(f.y+p.lB[1]),p.bendL*sc,-dir);
+    limb(g,x(p.lean*0.25),y(p.sh),x(p.aF[0]),y(p.aF[1]),p.bendA*sc,dir);
+    limb(g,x(p.lean*0.25),y(p.sh),x(p.aB[0]),y(p.aB[1]),p.bendA*sc,dir);
+    g.beginPath();g.arc(x(p.lean*0.5),y(p.head),0.135*sc,0,6.29);
+    if(f.flash>0)g.fillStyle='#ff5b5b';
+    g.fill();g.fillStyle=col;
+    if(f.spark>0){g.strokeStyle='#5bc0eb';
+      g.beginPath();g.arc(x(0.4),y(1.1),0.22*sc,0,6.29);g.stroke()}
+    const a=ATK[f.act];
+    if(a&&f.ph<a.wind&&!f.ko){
+      g.fillStyle='#232b35';
+      g.fillRect(X(f.x)-0.35*sc,Y(f.y+2.0),0.7*sc,3*dpr);
+      g.fillStyle='#ffd166';
+      g.fillRect(X(f.x)-0.35*sc,Y(f.y+2.0),0.7*sc*(f.ph/a.wind),3*dpr);
+    }
+  }
+  function drawArenaG(g,bout,ax,ay,aw,ah,dpr,label,big){
+    g.fillStyle='#171b26';
+    g.fillRect(ax,ay,aw,ah);
+    g.strokeStyle='#2e3945';g.lineWidth=dpr;
+    g.strokeRect(ax,ay,aw,ah);
+    const gy=ay+ah-10*dpr;
+    const X=x=>ax+6*dpr+x/ARENA*(aw-12*dpr);
+    const sc=(ah-(big?46:34)*dpr)/2.15;
+    const Y=v=>gy-v*sc;
+    g.beginPath();g.moveTo(ax+4*dpr,gy);g.lineTo(ax+aw-4*dpr,gy);g.stroke();
+    g.fillStyle='rgba(122,229,130,0.4)';
+    g.fillRect(ax+4*dpr,gy,aw-8*dpr,1.5*dpr);
+    const t=tick*DT;
+    drawFighterG(g,bout.G,X,Y,sc,'#9aa5b1',dpr,t);
+    drawFighterG(g,bout.L,X,Y,sc,'#ff7a59',dpr,t);
+    const bw=aw*0.32;
+    g.fillStyle='#232b35';g.fillRect(ax+5*dpr,ay+5*dpr,bw,4*dpr);
+    g.fillStyle='#ff7a59';
+    g.fillRect(ax+5*dpr,ay+5*dpr,bw*bout.L.hp/10,4*dpr);
+    g.fillStyle='#232b35';g.fillRect(ax+aw-5*dpr-bw,ay+5*dpr,bw,4*dpr);
+    g.fillStyle='#9aa5b1';
+    g.fillRect(ax+aw-5*dpr-bw*bout.G.hp/10,ay+5*dpr,bw*bout.G.hp/10,4*dpr);
+    g.font=(9*dpr)+'px IBM Plex Mono';g.textAlign='center';
+    g.fillStyle='#8b98a5';
+    g.fillText(label+' '+bout.winsL+'—'+bout.winsG,ax+aw/2,ay+12*dpr);
+    if(bout.state==='ko'){
+      g.font='600 '+((big?20:13)*dpr)+'px IBM Plex Sans';
+      g.fillStyle='#ffd166';
+      g.fillText('K.O.',ax+aw/2,ay+ah*0.45);
+    }
+  }
+})();
+
+
 /* ============ harness ============ */
 let scen=null,brain=null,learning=false,paused=false,simMul=1,simT=0;
 let ringP=null,ringB=null,chartData=[];
@@ -2415,7 +3350,9 @@ function drainBrainEvents(){
 
 function selectScenario(id){
   scen=SCENARIOS.find(s=>s.id===id);
-  brain=new Brain({dt:scen.dt,...scen.brainCfg});   // brainCfg.dt may override
+  const BK=(window.FORCE_BRAIN==='v2'||(scen.brainCfg.v2&&window.FORCE_BRAIN!=='v1'))
+    ?BrainV2:Brain;
+  brain=new BK({dt:scen.dt,...scen.brainCfg});   // brainCfg.dt may override
   loggedEvents=0;simT=0;learning=false;chartData=[];
   const N=scen.metric.winCount||
           Math.max(8,Math.round(scen.metric.winSec/scen.dt));
@@ -2546,7 +3483,7 @@ function tick(now){
   requestAnimationFrame(tick)}
 
 /* tabs */
-{const ORDER=['balance','path','car','flight','launcher','maze','fight','hive'];
+{const ORDER=['balance','path','car','flight','launcher','maze','fight','hive','gossip'];
  SCENARIOS.sort((a,b)=>ORDER.indexOf(a.id)-ORDER.indexOf(b.id));
  const tabs=document.getElementById('tabs');
  for(const s of SCENARIOS){

@@ -52,3 +52,41 @@ it implies for the next design. Append-only; synthesis happens later.
     launcher) n=100 beat n=1000 on control tasks; the whiteness trigger is
     unreliable under ~1000 samples, so episodic configs start big instead
     of growing.
+
+## V2 build results (2026-08-25) - all vs V1 on identical tasks/seeds
+
+Shipped in BrainV2 (testbench default): k-WTA sparsity (continuous) /
+exact-Golgi (episodic), projection operator, Autostep (continuous) /
+familiarity-NLMS (episodic), convex fast-slow mix (continuous, neutral
+boot), 3 adaptive Hopf oscillator channels (continuous), error-directed
+recycling, per-weight energy for merging, novelty-bonus exploration.
+
+Scoreboard (brain error as % of plain twin; lower is better):
+  balance 43.9 -> 35.0 | path 58.1 -> 50.4 | car 48.0 -> 48.3 (tie)
+  flight 36.2 -> 20.5 | launcher 77.8 -> 54.4 | maze ~100 (boundary, unchanged)
+  fighter first-block 66% -> 90%+ sustained (novelty exploration)
+  one-mind hive 60/90/91 -> 75/99/93 (200 s blocks)
+
+17. **Autostep is data-hungry: rule must match stream density.** Meta
+    step-sizes win on dense continuous streams, lose badly on ~190-sample
+    episodic tasks; NLMS+familiarity stays the episodic rule.
+18. **Sparsifier must match regime too**: k-WTA's threshold shaving loses
+    discrimination on tiny episodic contexts; exact-Golgi stays there.
+19. **Teach with delta = target − CURRENT prediction, choose with
+    post-teach scores.** Stale remembered scores in either role cost the
+    fighter ~25 winrate points. Fresh reads are ~1 us; correctness is free.
+20. **Novelty-bonus exploration beats epsilon-greedy** (90% vs 66% first
+    block): optimism toward untaught basis regions explores exactly the
+    right actions instead of random ones.
+21. **One-step TD bootstrap did not help** the fighter (slower start, same
+    ceiling). Multi-step credit remains open; not worth its risk today.
+22. **Gossip works and matches the one-mind hive**: isolated 60/77/88 vs
+    gossip-20s 68/89/99 vs one-mind 75/99/93. Decentralization keeps the
+    fleet benefit, as diffusion-LMS theory predicts. Preconditions learned
+    the hard way: all brains must share ONE basis seed, and homogeneous
+    fleets must merge BOTH layers (slow-only transfers ~nothing at demo
+    timescales; the fast-never-travels doctrine is for heterogeneous
+    fleets).
+23. **Tile coding loses at equal memory** (balance 72.6 vs 35.0; car 85.6
+    vs 48.3, untuned tile hyperparameters noted): the tanh random basis
+    survives its CMAC challenge for these smooth-dynamics tasks.
