@@ -1,9 +1,10 @@
 # Architecture reference — current state (V2.1, 2026-08-26)
 
 The single source of truth is `ui/testbench.html` (one self-contained file:
-two brain classes + nine scenarios + harness). The Python library `cereb/`
+two brain classes + ten scenarios + harness). The Python library `cereb/`
 is V1-era with partial back-ports and is NOT current — treat it as legacy
 until someone back-ports BrainV2 or formally deprecates it.
+Deployment map + cost table + standing limitations: `docs/APPLICATIONS.md`.
 
 ## Files
 
@@ -96,6 +97,7 @@ basis seed (finding 22).
 ## Current benchmark numbers (V2.1 defaults, 10 seeds, mean +- sd, 240 s)
 
 balance 11.8+-1.8 | path 16.4+-2.8 | car 18.4+-4.5 | flight 11.1+-1.8 |
+rover 12.5+-6.8 (blind-context 15.3+-7.4; finding 33) |
 launcher 38.9+-7.0 | maze 100.5+-1.9 (harm eliminated, finding 31) |
 fight winrate/500s-block 68/89/93 | one-mind hive /200s-block 78/93/95 |
 gossip-20s 64/91/93 vs isolated 56/87/89.

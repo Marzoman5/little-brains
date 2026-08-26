@@ -225,3 +225,49 @@ path 16.4+-2.8 | car 18.4+-4.5 | flight 11.1+-1.8 | launcher 38.9+-7.0 |
 maze 100.5+-1.9 (harm eliminated) | fight 68/89/93 | hive 78/93/95 |
 gossip-20s 64/91/93. Every continuous scenario beats V1 3-5x; nothing
 regressed; two mechanisms and one constant removed.
+
+## Closing the cerebellum book (2026-08-26 evening) — the limit probes
+
+33. **The interference catastrophe did not happen: proprioception breaks
+    regime aliasing.** The rover (frozen blind scenario, concern #2 —
+    predictions committed before the first run at e6633bc) alternates
+    three terrains with sign-opposed steering faults. Frozen prediction:
+    blind mode (no slip/drift channels) averages destructively,
+    ~85-115%. MEASURED: blind 15.3+-7.4 vs slip-sensed 12.5+-6.8 (10
+    seeds, 240 s) — nearly identical; still 17.3+-7.7 at 10 s dwell;
+    no degradation at 600 s; V1 does 29.8. Mechanism of the wrong
+    prediction: the "blind" context kept yawRate, and commanded-vs-
+    achieved motion IS a slip sensor — FAN=4 random conjunctions of
+    (command, response) channels linearly separate three terrains
+    without any dedicated regime sensor. Finding 15 sharpened: the
+    averaging catastrophe requires regimes invisible to EVERY channel
+    including proprioceptive discrepancies — rarer in real plants than
+    theory feared, because acting on a plant reveals it. MOSAIC-style
+    multiple models stay on the menu but now need a genuinely aliased
+    case (e.g., opponent intent before first contact) to earn their way
+    in. A truly-aliased rover variant (yawRate removed) remains untested.
+34. **No bursting within a million steps.** F2 (drift-then-burst under
+    FEL's self-quenching excitation) probed: balance, 10,000 s
+    (10^6 steps at dt 0.01), 3 seeds, sensor noise 0 and 0.01 rad,
+    health telemetry per 500 s block. Result: zero NaN, zero weights at
+    the projection clamp at any sample, fast-layer norms DECAY over the
+    run (27->8; sigma-mod doing its job), pct stays in a stable band
+    (2-13 clean / 7-17 noisy) with no burst excursion in 120 sampled
+    blocks. The risk is bounded, not eliminated: one scenario, 10^6
+    steps, moderate noise. The health() telemetry (clamp fraction, norm
+    drift) is now permanent bench equipment for longer bounds.
+35. **Compute audit (what it actually costs).** Measured (Node x64
+    desktop, capacity pinned): control brain n=64/nCtx=8/J=1 learning
+    12.8 us/step (9.4 with the NLMS-only build), reads 6.1 us; n=128/J=2
+    42 us; 320-unit/8-output decision reads 169 us. Live float64 memory
+    n=64/J=1: 7.9 KB (6.4 KB NLMS build — beta/h/v are 1.5 KB). Derived
+    MCU estimates (Q15 + tanh LUT + warm-started bisection): Cortex-M4
+    ~60-100 us/step (1% CPU at 100 Hz); Cortex-M0+ ~200-260 us (2-3%
+    at 100 Hz); ATmega328 (Arduino Uno) ~1-1.7 ms/step -> 50-100 Hz
+    loops at 7-17% CPU with n=32-64 in ~0.8-1.5 KB RAM; PIC18 similar,
+    dsPIC33/PIC24 M4-class. Smallest sensible target: ATmega328/PIC18,
+    n=32, 50 Hz, <1 KB RAM. Cheapest speedups not yet taken: warm-start
+    the Golgi bisection from the previous threshold (24 iters -> ~4, the
+    single largest cost after V2.1), active-set-only loops (~20% fire),
+    Q15 packing, NLMS-only build, fixed capacity (kills the 1024-unit
+    preallocation). See docs/APPLICATIONS.md for the deployment map.

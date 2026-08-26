@@ -78,6 +78,19 @@ better classical parts strengthens the product; it never dilutes it.
 > is now the highest-priority open problem, since certification is the
 > product. #2 (blind scenario), #3, #9, #10, #11 remain untouched.
 >
+> STATUS 2026-08-26 late (session 3 close-out): #2 RESOLVED — the rover
+> is the frozen blind scenario, and it FALSIFIED the interference
+> prediction (finding 33: proprioception disambiguates regimes; the
+> cerebellum is stronger than theory feared). Burst risk bounded to
+> 10^6 steps (finding 34). Compute audited, deployment map written
+> (finding 35, docs/APPLICATIONS.md). The cerebellum book is CLOSED at
+> V2.1: remaining upgrades are the software-tanh/Q15 port (top priority
+> — unlocks CI, instinct files, MCU in one move), the truly-aliased
+> rover variant, delay/F5, and then the next-parts menu
+> (docs/horizons-2026-08-26/) starting with the Smith-predictor forward
+> model. Still open from the old list: #9 (Python), #10 (fight engine
+> unification), #11 (tuned tiles).
+>
 > STATUS 2026-08-26 (session 3): #3 LARGELY RESOLVED — the regime table
 > shrank: ONE sparsifier for both regimes (exact Golgi fixed point,
 > finding 30, a 2-4x board-wide win over k-WTA; kFrac constant deleted)
