@@ -167,3 +167,61 @@ path 59.1+-13.2 | car 39.2+-6.9 | flight 35.7+-9.4 | launcher-240
 hive 78/93/95 | gossip-20s 64/91/93. V2 now beats V1 on balance+car,
 ties path/launcher/fight/hive, loses flight slightly (32.5+-1.6 V1),
 and maze needs the finding-25 fix before any "harmless" claim.
+
+## The V2.1 batch (2026-08-26) — the sparsifier was the bottleneck
+
+30. **The exact Golgi fixed point is the right sparsifier in BOTH
+    regimes — the k-WTA continuous default was costing 2-4x.** Nobody
+    had ever tried the per-step exact solve in continuous mode: V1 used
+    a lagging Golgi ODE there, V2 replaced it with deterministic k-WTA
+    (8%). Head-to-head, 10 seeds, 240 s (pct, lower better):
+    kwta -> golgi: balance 33.0->11.8+-1.8, path 59.1->16.4+-2.8,
+    car 39.2->18.4+-4.5, flight 35.7->11.1+-1.8 — and variance collapses.
+    Mechanism (controlled): ~2/3 is code density (kwta at matched
+    kFrac=0.184 recovers to 16.6/37.5/28.0/15.1) and the rest is the
+    adaptive, shave-free threshold (matched-density kwta still loses
+    everywhere). Golgi needs NO density constant, barely grows (64-130
+    units vs 130-320 — beats bigger brains with less capacity), stays
+    healthy at 900 s (flight 3.9), and DELETES one regime switch plus
+    the kFrac constant. V2.1 now beats V1 3-5x on every continuous
+    scenario. Corollary: finding 16's "capacity is non-monotonic" was
+    partly the sparsifier's fault — with the right code, 64 units
+    suffice where k-WTA needed 300.
+    Also tested: Autostep's e*s effective-step bound (the tight
+    no-overshoot bound; 2012-audit D2). Spectacular on three scenarios
+    (balance 5.1, flight 8.2+-0.2) but blows up on path (49.9+-38.1) —
+    fails the whole-board rule, rejected: the e^2 conservatism is
+    load-bearing on the highest-gain task.
+31. **The outcome watchdog closes finding 25 — after teaching its own
+    lesson about anchors.** New optional wire: `brain.outcome(c)` — the
+    host reports the non-negative cost it already measures (wasted
+    steps, |miss|); cost while the gate is closed anchors the
+    pre-engagement baseline; engaged cost above 1.5x anchor ratchets an
+    authority cap down 0.7x (recovers slowly below 1.15x). The cap
+    outranks the correlation gate. First (naive) version anchored on
+    1-2 samples and STRANGLED the healthy launcher (43.2 -> 94.8) —
+    finding 2's false-alarm lesson, relearned on the other side: the
+    anchor needs >=8 samples, a slow (0.1) cost EMA, >=4 engaged
+    samples before judgment, and hysteresis. Robust version: maze
+    contained on all 10 seeds (100.5+-1.9, max 104.6 vs yesterday's
+    643.7) while the launcher is bit-identical (43.2). Wired into maze
+    + launcher; fight/hive/gossip left unwired (bounded cost + gate:off
+    makes it inert there). The certification story now has its explicit,
+    auditable "worse than without it" component. Residual truth: maze
+    settles AT ~100 — the veto brain is neutralized, not helpful; the
+    boundary exhibit is honest again.
+32. **Same-machine engines already disagree on tanh — measured.**
+    Chrome 148 (host UCRT libm) vs Node 24 (V8 13.6 fdlibm port):
+    tanh(0.8) differs by 2 ulp; after 240 s the car drifts 16.2 vs 16.5
+    pct. exp(1) agrees. Finding 29 is no longer theoretical: the new
+    headless CLI runner (tools/run_board.js — full 10-seed board in
+    ~5 min, one command) is numerically honest but NOT bit-compatible
+    with the browser rig until the software-tanh batch lands. Official
+    numbers stay browser-side; the Node baseline
+    (results/board-v2.1-node.json) is the CI diff reference.
+
+V2.1 board (browser rig, 10 seeds, mean +- sd): balance 11.8+-1.8 |
+path 16.4+-2.8 | car 18.4+-4.5 | flight 11.1+-1.8 | launcher 38.9+-7.0 |
+maze 100.5+-1.9 (harm eliminated) | fight 68/89/93 | hive 78/93/95 |
+gossip-20s 64/91/93. Every continuous scenario beats V1 3-5x; nothing
+regressed; two mechanisms and one constant removed.

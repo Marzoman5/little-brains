@@ -476,6 +476,13 @@ class BrainV2{
     this.tauGolgi=0.1;
     this.episodic=this.dt>=this.tauGolgi;
     this.basisKind=cfg.basis||'tanh';
+    /* Sparsifier: exact Golgi fixed point in BOTH regimes (finding 30).
+       The k-WTA continuous default lost 2-4x board-wide to the per-step
+       exact solve — a combination V1 (ODE) and V2 (k-WTA) never tried.
+       Self-tuning density, no kFrac constant, one regime switch removed.
+       'kwta' kept for study. */
+    this.sparsifier=cfg.sparsifier||'golgi';
+    this.boundES=cfg.bound==='es';          // Autostep step bound on e*s (study)
     this.nOsc=cfg.osc!==undefined?cfg.osc:(this.episodic?0:3);
     this.nCtx=this.nCtxIn+2*this.nOsc;       // internal ctx incl. oscillators
     this.td=Math.exp(-this.dt/(cfg.tauElig||0.3));
@@ -536,6 +543,16 @@ class BrainV2{
     this.gRU=new Float64Array(J);this.gRR=new Float64Array(J);
     this.gUU=new Float64Array(J);this.uu0=null;
     this.alpha=new Float64Array(J);if(!this.gateOn)this.alpha.fill(1);
+    /* outcome watchdog (finding 25): the host may report a non-negative
+       cost — "the metric you already have", lower is better — via
+       outcome(c). Cost while the gate is closed anchors the
+       pre-engagement baseline; once engaged, cost above harmRatio x
+       anchor ratchets an authority cap down. This is the "worse than
+       without it" contract made explicit for regimes whose teacher
+       cannot express harm (sparse or heuristic labels — the maze
+       failure). The correlation gate alone provably misses that class. */
+    this.oPre=null;this.oNow=null;this.oPreN=0;this.oN=0;this.oCap=1;
+    this.harmRatio=1.5;
     /* oscillators: phase, omega (rad/s) */
     this.oscPh=new Float64Array(this.nOsc);
     this.oscW=new Float64Array(this.nOsc);
@@ -558,7 +575,7 @@ class BrainV2{
     this.wcCtx=new Float64Array(this.wcCap*this.nCtx);   // normalized ctx
     this.sTmp=new Float64Array(C);this.xnTmp=new Float64Array(this.nCtx);
     /* sparse-data regimes want denser codes: more units share each lesson */
-    this.kFrac=this.episodic?0.25:0.08;
+    this.kFrac=cfg.kFrac||(this.episodic?0.25:0.08);
     this.kwta=Math.max(4,Math.round(this.kFrac*this.n0));
   }
   seedUnit(i){const r=this.rng,o=i*FAN;
@@ -572,6 +589,7 @@ class BrainV2{
     this.elig.fill(0);this.out.fill(0);this.n=this.n0;
     this.gRU.fill(0);this.gRR.fill(0);this.gUU.fill(0);this.uu0=null;
     this.alpha.fill(this.gateOn?0:1);this.t=0;this.stepI=0;this.mass=0;
+    this.oPre=null;this.oNow=null;this.oPreN=0;this.oN=0;this.oCap=1;
     this.errHist=[];this.normHist=[];this.lastGrowth=-1e9;
     this.lowTime.fill(0);this.decAcc.fill(0);this.decN=0;
     this.rbN=0;this.rbI=0;this.wcN=0;this.wcI=0}
@@ -602,7 +620,7 @@ class BrainV2{
         +this.wIn[o]*xn[this.idx[o]]+this.wIn[o+1]*xn[this.idx[o+1]]
         +this.wIn[o+2]*xn[this.idx[o+2]]+this.wIn[o+3]*xn[this.idx[o+3]];
       this.sTmp[i]=Math.tanh(z)}
-    if(this.episodic){
+    if(this.sparsifier==='golgi'){
       /* episodic: exact Golgi fixed point (proven for sparse-sample
          regimes; k-WTA's threshold shaving loses discrimination there) */
       let lo=0,hi=1;
@@ -751,7 +769,9 @@ class BrainV2{
               bj[i]+=this.metaTheta*dxh/vj[i];
               if(bj[i]>1)bj[i]=1;else if(bj[i]<-12)bj[i]=-12;
             }
-            M+=Math.exp(bj[i])*x*x;
+            /* step bound: e*e is conservative; e*s is the tight no-overshoot
+               bound in prediction space given e >= s >= 0 (2012 audit, D2) */
+            M+=Math.exp(bj[i])*x*(this.boundES?sA[i]:x);
           }
           /* NOTE deliberate deviation from Autostep eq. (7): the alpha/M
              normalization here is TRANSIENT (per-step), not stored. The
@@ -810,8 +830,40 @@ class BrainV2{
       this._housekeeping(tch);
     }
     this.t+=this.dt;this.stepI++;
+    /* the outcome cap outranks the correlation gate (finding 25) */
+    if(this.oCap<1)for(let j=0;j<J;j++)
+      if(this.alpha[j]>this.oCap)this.alpha[j]=this.oCap;
     for(let j=0;j<J;j++)this.corr[j]=this.alpha[j]*this.out[j];
     return this.corr;
+  }
+
+  /* outcome watchdog: host reports cost c >= 0, lower is better. See the
+     constructor note. Anchor freezes at first engagement; the cap decays
+     x0.7 on harm and is earned back slowly while cost stays near/below
+     the anchor. */
+  outcome(c){
+    if(!(c>=0)||!Number.isFinite(c))return;
+    /* anchor: reports while authority is low, and in any case the first
+       8 reports (weights boot at zero, so the earliest reports are
+       near-baseline even for gate:false hosts). A 1-2 sample anchor is
+       episode noise and false-alarms — the launcher taught us (f.31). */
+    if(this.oPreN<8||this.meanAlpha()<0.5){
+      this.oPreN++;
+      this.oPre=this.oPre===null?c
+        :this.oPre+(c-this.oPre)/Math.min(this.oPreN,8);
+      if(this.meanAlpha()<0.5)return;           // pure baseline sample
+    }
+    this.oNow=this.oNow===null?c:this.oNow+0.1*(c-this.oNow);
+    this.oN++;
+    const anchor=Math.max(this.oPre,1e-9);
+    if(this.oN>=4&&this.oNow>this.harmRatio*anchor){
+      this.oCap=Math.max(0.05,this.oCap*0.7);
+      this.events.push([this.t,'outcome watchdog: cost '
+        +this.oNow.toFixed(2)+' vs pre-engagement '+anchor.toFixed(2)
+        +' — authority capped at '+this.oCap.toFixed(2)]);
+    }else if(this.oNow<1.15*anchor){
+      this.oCap=Math.min(1,this.oCap*1.03+0.005);
+    }
   }
 
   /* novelty bonus for decision scoring: optimism toward basis regions this
@@ -1535,6 +1587,7 @@ SCENARIOS.push({
         const ep=P.xl-D, eb=B.xl-D;
         histP.push(Math.abs(ep)); if(histP.length>10)histP.shift();
         histB.push(Math.abs(eb)); if(histB.length>10)histB.shift();
+        if(learning&&brain.outcome)brain.outcome(Math.abs(eb));
         return {ep,eb};
       }
       return null;
@@ -1860,10 +1913,12 @@ SCENARIOS.push({
           }
         }
         pause=25; // ~0.5 s at dt 0.02
-        return {
-          ep:(twins.plain.steps-opt)/opt,
-          eb:(twins.brain.steps-opt)/opt
-        };
+        const ep=(twins.plain.steps-opt)/opt,
+              eb=(twins.brain.steps-opt)/opt;
+        // outcome wire: wasted-step fraction is the cost the host already
+        // measures — the watchdog's harm anchor (finding 25)
+        if(learning&&brain.outcome)brain.outcome(eb);
+        return {ep,eb};
       }
       return null;
     },

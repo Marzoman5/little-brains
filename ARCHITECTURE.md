@@ -1,4 +1,4 @@
-# Architecture reference — current state (V2.1-dev, 2026-08-25 evening)
+# Architecture reference — current state (V2.1, 2026-08-26)
 
 The single source of truth is `ui/testbench.html` (one self-contained file:
 two brain classes + nine scenarios + harness). The Python library `cereb/`
@@ -34,12 +34,19 @@ Regime switch: `episodic = dt >= 0.1`. It selects:
 
 | mechanism        | continuous (dt < 0.1)        | episodic (dt >= 0.1)      |
 |------------------|------------------------------|---------------------------|
-| sparsifier       | deterministic k-WTA (8% of n)| exact Golgi fixed point   |
+| sparsifier       | exact Golgi fixed point in BOTH regimes (finding 30; |
+|                  | cfg.sparsifier:'kwta' + cfg.kFrac kept for study)    |
 | learning rule    | Autostep (per-weight meta lr)| familiarity-scaled NLMS   |
-| fast/slow output | plain sum (mix off — finding 27; cfg.mix/mixPC to study) |
+| fast/slow output | plain sum in BOTH regimes (finding 27; cfg.mix/mixPC)|
 | oscillators      | 3 adaptive Hopf channels     | none                      |
 | replay ring      | off                          | on (rbCap, masked)        |
 | growth           | on (whiteness trigger)       | off (start big via n0)    |
+
+Outcome watchdog (finding 31): optional `brain.outcome(cost)` — host
+reports its own non-negative cost metric; pre-engagement cost anchors the
+"without the brain" baseline; engaged cost > 1.5x anchor ratchets an
+authority cap down (recovers below 1.15x; cap outranks the gate). Wired
+in maze + launcher. This is the certifiable harm component.
 
 Always on: projection operator (weights clamped to +-authority), fast-layer
 leak (sigma-modification; per-update constant, per-config for shared
@@ -86,25 +93,28 @@ basis seed (finding 22).
   onClick?})`. Twins doctrine: gray twin = stock algorithm, coral twin =
   stock + brain; byte-identical until the switch flips.
 
-## Current benchmark numbers (V2 defaults, 10 seeds, mean +- sd, 240 s)
+## Current benchmark numbers (V2.1 defaults, 10 seeds, mean +- sd, 240 s)
 
-balance 33.0+-11.7 | path 59.1+-13.2 | car 39.2+-6.9 | flight 35.7+-9.4 |
-launcher 38.9+-7.0 | maze 99-160 with harm outliers (finding 25!) |
+balance 11.8+-1.8 | path 16.4+-2.8 | car 18.4+-4.5 | flight 11.1+-1.8 |
+launcher 38.9+-7.0 | maze 100.5+-1.9 (harm eliminated, finding 31) |
 fight winrate/500s-block 68/89/93 | one-mind hive /200s-block 78/93/95 |
 gossip-20s 64/91/93 vs isolated 56/87/89.
 V1 reference: balance 45.5+-2.1 | path 60.1+-3.6 | car 55.5+-4.3 |
 flight 32.5+-1.6 | launcher 42.3+-5.8 | maze 99.4+-2.0 | fight 66/90/90 |
-hive 76/92/92. Raw data + analyzer committed under `results/`, `tools/`.
+hive 76/92/92. Every continuous scenario beats V1 by 3-5x (finding 30).
+Raw data + analyzer under `results/`, `tools/`. CLI board:
+`node tools/run_board.js` (~5 min; Node baseline
+results/board-v2.1-node.json — 2 ulp tanh offset vs browser, finding 32).
 
 ## Known debts
 
 - Python library not at V2 parity.
 - fighter/hive/gossip carry three copy-pasted engine IIFEs.
-- No Node.js on the dev machine — sweeps run in the in-app browser via
-  `bench.sweep`; a CLI runner (headless Node + DOM shim) is designed but
-  blocked on installing Node (ask the owner).
-- Maze harm outliers (finding 25): the gate cannot see decision-mode harm;
-  the "harmless boundary exhibit" claim is retracted until fixed.
+- Headless CLI runner exists (tools/run_board.js, Node 24 installed
+  2026-08-26) but is 2 ulp off the browser on Math.tanh (finding 32);
+  official numbers stay browser-side until the software-tanh batch.
+- GitHub remote: https://github.com/Marzoman5/little-brains (private);
+  push after every session.
 - Float determinism plan (finding 29): software tanh + Box-Muller
   replacement designed, not implemented — it resets all baselines, so it
   must be its own batch with a fresh multi-seed board.

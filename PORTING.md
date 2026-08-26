@@ -62,8 +62,10 @@ It is ~150 lines. Port in this order and test each piece:
 2. Context normaliser: per-channel running mean/variance (EMA).
 3. Granule layer: each unit reads 4 random context channels ->
    `tanh(w1*x1 + ... + w4*x4 + bias)`. Index array + weight array, no matrix.
-4. Sparsity: continuous mode = Golgi leaky integrator; episodic mode
-   (`dt >= 0.1 s`) = solve `inh = k * sum(relu(g - inh))` by bisection.
+4. Sparsity: solve the Golgi fixed point `inh = k * sum(relu(g - inh))`
+   by bisection (k = 0.3), every step, in BOTH regimes — the exact solve
+   replaced both the old leaky integrator and k-WTA after beating them
+   2-4x board-wide (finding 30).
 5. Readout: two weight vectors per output (fast + slow), output =
    `clip((wf+ws) . s)`, one-pole smoothing when `tau_out > dt`.
 6. Learning: eligibility trace; NLMS update divided by trace power; rate
@@ -88,5 +90,11 @@ the cap at 128 units for ~4 KB.
 - Output is silent until predictions demonstrably match the teacher.
 - If the brain ever makes things worse than before it engaged, its own
   watchdog withdraws it.
+- Optional but recommended: report the cost metric you already have
+  (`brain.outcome(cost)`, non-negative, lower is better, e.g. once per
+  episode). Cost before the brain engages anchors the "without it"
+  baseline; if cost later rises 1.5x above that anchor the brain's
+  authority is capped down until it earns it back. This covers regimes
+  where the teacher signal alone cannot express harm.
 - Output never exceeds half your controller's authority.
 - A NaN anywhere zeroes the fast layer and logs, instead of propagating.
