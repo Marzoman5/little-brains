@@ -77,6 +77,19 @@ better classical parts strengthens the product; it never dilutes it.
 > harm watchdog demonstrably FAILS in decision mode (maze seed 1) — this
 > is now the highest-priority open problem, since certification is the
 > product. #2 (blind scenario), #3, #9, #10, #11 remain untouched.
+>
+> STATUS 2026-08-26 (session 3): #3 LARGELY RESOLVED — the regime table
+> shrank: ONE sparsifier for both regimes (exact Golgi fixed point,
+> finding 30, a 2-4x board-wide win over k-WTA; kFrac constant deleted)
+> and one output rule (plain sum). Remaining regime flips: learning rule,
+> oscillators, replay, growth. Finding 25 FIXED by the outcome watchdog
+> (finding 31; note its false-alarm lesson). #12 RESOLVED (tools/
+> run_board.js, Node installed) with the finding-32 caveat: Node and
+> Chrome disagree by 2 ulp on tanh, so the browser stays the official
+> rig — the software-tanh determinism batch is now the top infrastructure
+> priority. GitHub remote live: Marzoman5/little-brains (push every
+> session). Still untouched: #2 (blind scenario — do it next), #9
+> (Python), #10 (three fight engines), #11 (tuned tiles).
 
 1. **Everything is single-seed.** Every number in FINDINGS.md is one
    deterministic run. Small deltas (car 48.0 vs 48.3) are meaningless and

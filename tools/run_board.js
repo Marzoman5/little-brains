@@ -25,7 +25,7 @@ const w = loadBench(opt('file', null));
 const bench = w.bench;
 
 const jobs = [];
-for (const sc of ['balance', 'path', 'car', 'flight', 'launcher', 'maze'])
+for (const sc of ['balance', 'path', 'car', 'flight', 'rover', 'launcher', 'maze'])
   for (const s of seeds)
     jobs.push({ fn: 'run', args: [sc, 240, { seed: s, brain: brainV }], tag: sc });
 for (const s of seeds)

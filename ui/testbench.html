@@ -1014,6 +1014,15 @@ class BrainV2{
     return s}
   meanAlpha(){let s=0;for(let j=0;j<this.nOut;j++)s+=this.alpha[j];
     return s/this.nOut}
+  /* read-only drift/burst telemetry (F1/F2 instrument): fast+slow norms
+     and the fraction of weights parked at the projection clamp */
+  health(){let clamp=0,tot=0,sn=0;
+    for(let j=0;j<this.nOut;j++){const wf=this.wf[j],ws=this.ws[j];
+      for(let i=0;i<this.n;i++){tot++;sn+=ws[i]*ws[i];
+        if(Math.abs(wf[i])>=0.98*this.Wbox||
+           Math.abs(ws[i])>=0.98*this.Wbox)clamp++}}
+    return{wf:+this.fastNorm().toFixed(4),ws:+Math.sqrt(sn).toFixed(4),
+      clampFrac:+(clamp/Math.max(tot,1)).toFixed(4),oCap:+this.oCap.toFixed(3)}}
 }
 BrainV2._topBuf=new Float64Array(0);
 
@@ -1229,9 +1238,14 @@ SCENARIOS.push({
   }
 
   // ---------- scenario factory ----------
+  const nmul=a=>function(){a|=0;a=a+0x6D2B79F5|0;
+    let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+    return((t^t>>>14)>>>0)/4294967296;};
   function makeScn(o){
     const cf=o;
-    let t=0, dist=o.defDist, mt=0;
+    let t=0, dist=o.defDist, mt=0, noise=0, nrng=null;
+    function ngauss(){let u=0,v=0;while(u===0)u=nrng();while(v===0)v=nrng();
+      return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
     const P={th1:0,th2:0,w1:0,w2:0,ix:[0,0],trail:[]};
     const B={th1:0,th2:0,w1:0,w2:0,ix:[0,0],trail:[]};
     function resetTwin(tw){
@@ -1246,22 +1260,30 @@ SCENARIOS.push({
         {id:'dist',label:'Disturbance',min:0,max:10,step:0.5,value:o.defDist,
          fmt:v=>v.toFixed(1)+' NÂ·m',apply:v=>{dist=v;}},
         {id:'tipmass',label:'Tip mass',min:0,max:1,step:0.05,value:0,
-         fmt:v=>v.toFixed(2)+' kg',apply:v=>{mt=v;}}
+         fmt:v=>v.toFixed(2)+' kg',apply:v=>{mt=v;}},
+        {id:'noise',label:'Sensor noise',min:0,max:0.05,step:0.002,value:0,
+         fmt:v=>v.toFixed(3)+' rad',apply:v=>{noise=v;}}
       ],
-      init(){ t=0; resetTwin(P); resetTwin(B); },
+      init(){ t=0; resetTwin(P); resetTwin(B); nrng=nmul(97+SEEDK()); },
       step(brain,learning){
         const r1=refPos(cf,0,t), r2=refPos(cf,1,t);
         const rd1=refVel(cf,0,t), rd2=refVel(cf,1,t);
+        /* sensor noise (default 0 = bit-identical historical board): both
+           twins measure through the same noisy sensors, like the shared
+           disturbance. Feeds the PID AND the brain's context. */
+        const n1=noise*ngauss(), n2=noise*ngauss(),
+              n3=noise*ngauss()*8, n4=noise*ngauss()*8;
         // plain twin: stock PID only
-        const eP1=r1-P.th1, eP2=r2-P.th2;
-        const uP1=hostU(cf,P,0,eP1,rd1-P.w1);
-        const uP2=hostU(cf,P,1,eP2,rd2-P.w2);
+        const eP1=r1-(P.th1+n1), eP2=r2-(P.th2+n2);
+        const uP1=hostU(cf,P,0,eP1,rd1-(P.w1+n3));
+        const uP2=hostU(cf,P,1,eP2,rd2-(P.w2+n4));
         // brain twin: same stock PID + brain correction (feedback-error learning)
-        const eB1=r1-B.th1, eB2=r2-B.th2, edB1=rd1-B.w1, edB2=rd2-B.w2;
+        const eB1=r1-(B.th1+n1), eB2=r2-(B.th2+n2),
+              edB1=rd1-(B.w1+n3), edB2=rd2-(B.w2+n4);
         let uB1=hostU(cf,B,0,eB1,edB1);
         let uB2=hostU(cf,B,1,eB2,edB2);
         if(learning){
-          CTX[0]=B.th1; CTX[1]=B.th2; CTX[2]=B.w1; CTX[3]=B.w2;
+          CTX[0]=B.th1+n1; CTX[1]=B.th2+n2; CTX[2]=B.w1+n3; CTX[3]=B.w2+n4;
           CTX[4]=eB1; CTX[5]=eB2; CTX[6]=edB1; CTX[7]=edB2;
           CTX[8]=uB1; CTX[9]=uB2;
           CTX[10]=Math.sin(WF*t); CTX[11]=Math.cos(WF*t);
@@ -1485,6 +1507,125 @@ SCENARIOS.push({
       g.fillStyle = C.brain; g.fillText('stock + brain', W-12*dpr, 24*dpr);
       g.fillStyle = C.muted; g.fillText('- - target path', W-12*dpr, 36*dpr);
       g.textAlign = 'left';
+    }
+  });
+})();
+
+(()=>{
+  // ---- Rover: terrain-switching interference probe -----------------------
+  // BLIND-PROTOCOL SCENARIO (concern #2): designed and frozen 2026-08-26
+  // BEFORE V2.1 ever ran on it. Three terrains with sign-opposed steering
+  // faults alternate on a seeded schedule. The 'context' challenge decides
+  // whether the brain can sense the terrain (slip + drift channels) or is
+  // blind to it. Prediction recorded at freeze time: sensed-mode learns
+  // per-terrain corrections and lands well under 100%; blind mode averages
+  // sign-opposed corrections and stays near-useless (~85-115%), possibly
+  // worse just after switches (two-rate re-expression).
+  const mulberry32=a=>function(){a|=0;a=a+0x6D2B79F5|0;
+    let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+    return((t^t>>>14)>>>0)/4294967296;};
+  const clip=(v,a,b)=>v<a?a:(v>b?b:v);
+  const DT=0.02, V=0.8, WB=0.2, KP=2.0, KD=0.8, SMAX=0.45;
+  // terrain: steering bias (rad), steering gain, lateral drift (m/s)
+  const TERR=[{bias: 0.14,gain:0.65,drift: 0.10,col:'#6b5a3e',name:'sand'},
+              {bias:-0.10,gain:1.00,drift:-0.12,col:'#3a4148',name:'asphalt'},
+              {bias: 0.05,gain:1.45,drift: 0.16,col:'#4a6a80',name:'ice'}];
+  let ctxMode=1, dwell=30;
+  let rng,t,ti,tNext,hist,gray,coral;
+  const bctx=new Float64Array(8);
+  function mkRover(){return{y:0,psi:0,yawRate:0,lastOff:0,slip:0,dEst:0,
+    trail:[]}}
+  function pickTerrain(){
+    let nx=Math.floor(rng()*TERR.length);
+    if(nx===ti)nx=(nx+1)%TERR.length;   // never repeat: force a switch
+    ti=nx;tNext=t+dwell;hist.push([t,ti]);if(hist.length>12)hist.shift();
+  }
+  function drive(r,steer){
+    const T=TERR[ti];
+    const eff=clip(T.gain*clip(steer,-SMAX,SMAX)+T.bias,-0.55,0.55);
+    const yr=V/WB*Math.tan(eff);
+    // expected yaw from the COMMAND under nominal (asphalt) response:
+    const yrExp=V/WB*Math.tan(clip(steer,-SMAX,SMAX));
+    r.slip+=0.2*((yr-yrExp)-r.slip);          // IMU-vs-command slip sensor
+    r.psi+=yr*DT;r.yawRate=yr;
+    const dy=(V*Math.sin(r.psi)+T.drift)*DT;
+    r.y+=dy;
+    r.dEst+=0.1*((dy/DT-V*Math.sin(r.psi))-r.dEst);  // GPS-vs-IMU drift est
+  }
+  SCENARIOS.push({
+    id:'rover',name:'Rover',
+    blurb:'The interference probe. Two rovers hold a line while the ground itself keeps changing — sand, asphalt, ice — each terrain pulling and responding differently. With slip sensing the coral rover can tell terrains apart and learn each one; set context to "blind" and every terrain’s lesson lands in the same memory. One cerebellum, three contradictory teachers.',
+    dt:DT,
+    brainCfg:{nCtx:8,nOut:1,authority:0.6,v2:true},
+    metric:{label:'Distance off the line',unit:'cm',scale:100,winSec:40},
+    challenges:[
+      {id:'context',label:'context',min:0,max:1,step:1,value:1,
+       fmt:v=>v>0.5?'slip-sense':'blind',apply:v=>{ctxMode=v>0.5?1:0}},
+      {id:'dwell',label:'terrain dwell',min:10,max:60,step:5,value:30,
+       fmt:v=>v.toFixed(0)+' s',apply:v=>{dwell=v}}],
+    init(){
+      rng=mulberry32(31+SEEDK());t=0;ti=-1;hist=[];
+      gray=mkRover();coral=mkRover();
+      pickTerrain();
+    },
+    step(brain,learning){
+      if(t>=tNext)pickTerrain();
+      let ep,eb;
+      {const off=gray.y,doff=(off-gray.lastOff)/DT;gray.lastOff=off;
+       drive(gray,-(KP*off+KD*doff));ep=off}
+      {const off=coral.y,doff=(off-coral.lastOff)/DT;coral.lastOff=off;
+       const sPD=-(KP*off+KD*doff);
+       let steer=sPD;
+       if(learning){
+         bctx[0]=off;bctx[1]=doff;bctx[2]=coral.yawRate;bctx[3]=sPD;
+         if(ctxMode===1){bctx[4]=coral.slip;bctx[5]=coral.dEst;
+           bctx[6]=0;bctx[7]=0}
+         else{bctx[4]=0;bctx[5]=0;bctx[6]=0;bctx[7]=0}
+         steer+=brain.step(bctx,sPD,true)[0];   // FEL: teacher = reflex
+       }
+       drive(coral,steer);eb=off}
+      t+=DT;
+      return{ep,eb}},
+    draw(g,W,H){
+      const dpr=devicePixelRatio||1;
+      const cy=H/2,sc=Math.min(H/2.4/0.6,140*dpr);
+      // terrain bands scrolling by time: show past ~12 s and next ~12 s
+      const span=24,x0=t-span*0.5;
+      const X=tt=>(tt-x0)/span*W;
+      for(let k=0;k<hist.length;k++){
+        const[ts,idx]=hist[k];
+        const te=k+1<hist.length?hist[k+1][0]:tNext;
+        const xa=Math.max(0,X(ts)),xb=Math.min(W,X(Math.min(te,x0+span)));
+        if(xb<=xa)continue;
+        g.fillStyle=TERR[idx].col;g.fillRect(xa,0,xb-xa,H);
+        if(xb-xa>50*dpr){g.fillStyle='rgba(223,230,236,0.55)';
+          g.font=(10*dpr)+'px IBM Plex Mono';g.textAlign='center';
+          g.fillText(TERR[idx].name,(xa+xb)/2,16*dpr)}
+      }
+      // the line
+      g.strokeStyle='rgba(223,230,236,0.5)';g.lineWidth=1.2*dpr;
+      g.setLineDash([5,5]);
+      g.beginPath();g.moveTo(0,cy);g.lineTo(W,cy);g.stroke();g.setLineDash([]);
+      // trails + rovers (x = now at 0.5W)
+      for(const[r,col] of[[gray,C.plain],[coral,C.brain]]){
+        r.trail.push(r.y);if(r.trail.length>400)r.trail.shift();
+        g.strokeStyle=col;g.lineWidth=1.4*dpr;g.beginPath();
+        for(let i=0;i<r.trail.length;i++){
+          const x=X(t-(r.trail.length-1-i)*DT),y=cy+r.trail[i]*sc;
+          i===0?g.moveTo(x,y):g.lineTo(x,y)}
+        g.stroke();
+        g.save();g.translate(X(t),cy+r.y*sc);g.rotate(r.psi);
+        g.fillStyle=col;
+        g.fillRect(-8*dpr,-5*dpr,16*dpr,10*dpr);
+        g.fillStyle='#12141a';
+        g.fillRect(2*dpr,-4*dpr,4*dpr,8*dpr);
+        g.restore();
+      }
+      g.font=(10*dpr)+'px IBM Plex Mono';g.textAlign='left';
+      g.fillStyle=C.muted;
+      g.fillText('terrain: '+TERR[ti].name+'   next switch in '
+        +(tNext-t).toFixed(0)+' s   context: '
+        +(ctxMode?'slip-sense':'BLIND'),12*dpr,H-10*dpr);
     }
   });
 })();
@@ -3574,7 +3715,7 @@ function tick(now){
   requestAnimationFrame(tick)}
 
 /* tabs */
-{const ORDER=['balance','path','car','flight','launcher','maze','fight','hive','gossip'];
+{const ORDER=['balance','path','car','flight','rover','launcher','maze','fight','hive','gossip'];
  SCENARIOS.sort((a,b)=>ORDER.indexOf(a.id)-ORDER.indexOf(b.id));
  const tabs=document.getElementById('tabs');
  for(const s of SCENARIOS){
@@ -3593,6 +3734,7 @@ window.bench={
       alpha:+brain.meanAlpha().toFixed(2),units:brain.n,
       nan:brain.nanEvents};
     if(scen.stats)r.stats=scen.stats();
+    if(brain.health)r.health=brain.health();
     return r},
   _applyCh(opts){
     if(opts&&opts.ch)for(const c of scen.challenges||[])
