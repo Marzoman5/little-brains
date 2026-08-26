@@ -138,3 +138,27 @@ direct precedent:
 6. **Oscillator channels** on car/flight — does the 2.9 cm floor fall?
 7. **Variance-gate + LinUCB** in the fighter, replacing eps-greedy.
 8. **TD(lambda) fighter** — does multi-step credit push past 96%?
+
+## Audit: proven old work vs our homebrew (functionality-first review)
+
+Adopt (old work wins):
+- Projection operator (robust adaptive control) for provable weight bounds;
+  note our leak IS sigma-modification (Ioannou 1983) - use the literature.
+- Autostep REPLACES the familiarity hack (proven, tuning-free, same job).
+- Convex combination of fast/slow layers (Arenas-Garcia 2006 theorem)
+  replaces the hand-tuned sum + leak race - pending one bench test.
+- Deterministic k-WTA replaces the Golgi ODE/bisection (k-WTA is the
+  standard abstraction of Golgi inhibition anyway; the ODE cost us 3 bugs).
+
+Measure, don't assume:
+- Hashed tile-coding basis vs tanh basis at equal memory (integer-only
+  basis would win the sub-$1 MCU tier if it ties on accuracy).
+
+Keep (ours wins or classical alternative not worth its machinery):
+- FEL default teacher (FxLMS noted as escape hatch only).
+- NLMS core (RLS is O(n^2) memory; diagonal approximations already listed).
+- Competence gate + pre-engagement watchdog (no classical equivalent).
+- Whiteness growth trigger, frozen-basis skeleton (the moat), replay, norm.
+
+Principle: the moat is the packaging (3-liner, contract, fleet, cert kit),
+not the math - adopting stronger classical parts strengthens the product.
