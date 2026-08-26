@@ -169,6 +169,11 @@ function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
   return((t^t>>>14)>>>0)/4294967296}}
 function gauss(rng){let u=0,v=0;while(u===0)u=rng();while(v===0)v=rng();
   return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+/* bench seeding: BENCHSEED offsets every RNG in the rig (brain basis +
+   scenario streams). 0 = the historical deterministic board. Set per run
+   via bench.run(id, secs, {seed}) — never by hand mid-run. */
+window.BENCHSEED=0;
+const SEEDK=()=>((window.BENCHSEED|0)*7919)|0;
 
 const FAN=4;
 class Brain{
@@ -1474,7 +1479,7 @@ SCENARIOS.push({
        fmt:v=>v.toFixed(3),apply:v=>{kd=v;}}
     ],
     init(){
-      rng=mulberry32(7); shot=0; phase=0; rest=0;
+      rng=mulberry32(7+SEEDK()); shot=0; phase=0; rest=0;
       D=60; w=0; thVac=0.5*Math.asin(clip(G*60/(V0*V0),-1,1)); aimB=thVac;
       P=null; B=null;
       lastTeacher=0; lastCtx=new Float64Array(5);
@@ -1685,9 +1690,9 @@ SCENARIOS.push({
     cols=nextCols;
     rows=Math.round(cols*0.65)|1;   // forced odd
     goalR=rows-1; goalC=cols-1;
-    walls=genMaze(1000+episode);
+    walls=genMaze(1000+episode+SEEDK());
     opt=bfsOpt();
-    const tseed=7+episode;          // identical for both twins
+    const tseed=7+episode+SEEDK();  // identical for both twins
     twins={ plain:mkTwin(tseed), brain:mkTwin(tseed) };
     records=[];
   }
@@ -2048,12 +2053,14 @@ SCENARIOS.push({
       {id:'react',label:'enemy reflexes',min:0,max:1,step:0.05,value:0.85,
        fmt:v=>(v*100).toFixed(0)+'%',apply:v=>{blockSkill=v}},
     ],
-    init(){A=mkBout(11,0);B=mkBout(11,0);
+    init(){A=mkBout(11+SEEDK(),0);B=mkBout(11+SEEDK(),0);
       tick=0;lastCtx=null;lastAct=-1;lastScore=0;
       predictor=new Brain({nCtx:13,nOut:8,authority:2,tauOut:0,dt:0.1,
-        gate:false,n0:192,seed:5});
+        gate:false,n0:192,seed:5+SEEDK()});
       predLastCtx=null;predLastP=null;predP=ZERO8;
       predHit=0;predTot=0;recent=[]},
+    stats:()=>({wA:[A.winsL,A.winsG],wB:[B.winsL,B.winsG],
+      predAcc:predTot?+(predHit/predTot).toFixed(3):0}),
     onClick(x,y,W,H){
       const dpr=devicePixelRatio||1;
       if(x>W-44*dpr&&y<40*dpr){soundOn=!soundOn;ensureAC()}
@@ -2635,7 +2642,7 @@ SCENARIOS.push({
 
   function buildSwarm(){
     swarm=[];
-    for(let k=0;k<N;k++)swarm.push(mkBout(300+k*17));
+    for(let k=0;k<N;k++)swarm.push(mkBout(300+k*17+SEEDK()));
   }
   function endRound(bout){
     if(bout.G.hp<=0)bout.winsL++;
@@ -2677,8 +2684,10 @@ SCENARIOS.push({
       {id:'size',label:'swarm size',min:2,max:8,step:1,value:6,
        fmt:v=>v+' bouts',apply:v=>{if(v!==N){N=v;if(control)buildSwarm()}}},
     ],
-    init(){control=mkBout(11);buildSwarm();
+    init(){control=mkBout(11+SEEDK());buildSwarm();
       tick=0;recent=[];pending=[];pulses=[]},
+    stats(){let w=0,l=0;for(const b of swarm){w+=b.winsL;l+=b.winsG}
+      return{hive:[w,l],control:[control.winsL,control.winsG]}},
     step(brain,learning){
       tick++;
       boutFrame(control);
@@ -3103,17 +3112,20 @@ SCENARIOS.push({
        fmt:v=>(v*100).toFixed(0)+'%',apply:v=>{blockSkill=v}},
     ],
     init(){
-      control=mkBout(11);
-      swarm=[];meetRng=mulberry32(77);nextMeet=null;meetCount=0;
+      control=mkBout(11+SEEDK());
+      swarm=[];meetRng=mulberry32(77+SEEDK());nextMeet=null;meetCount=0;
       for(let k=0;k<N;k++){
-        const b=mkBout(300+k*17);
+        const b=mkBout(300+k*17+SEEDK());
         b.brain=k===0?brain:new BrainV2({nCtx:13,nOut:8,authority:6,
           tauOut:0,dt:0.1,gate:false,n0:320,tauElig:0.02,leak:0.9995,
-          rbCap:256,seed:1});   // SAME basis seed: fusability's precondition
+          rbCap:256,seed:1+SEEDK()}); // SAME basis seed: fusability's precondition
         swarm.push(b);
       }
       tick=0;pending=[];meets=[];
     },
+    stats(){let w=0,l=0;for(const b of swarm){w+=b.winsL;l+=b.winsG}
+      return{gossip:[w,l],control:[control.winsL,control.winsG],
+        meets:meetCount}},
     step(hb,learning){
       tick++;
       boutFrame(control);
@@ -3352,7 +3364,7 @@ function selectScenario(id){
   scen=SCENARIOS.find(s=>s.id===id);
   const BK=(window.FORCE_BRAIN==='v2'||(scen.brainCfg.v2&&window.FORCE_BRAIN!=='v1'))
     ?BrainV2:Brain;
-  brain=new BK({dt:scen.dt,...scen.brainCfg});   // brainCfg.dt may override
+  brain=new BK({dt:scen.dt,seed:1+SEEDK(),...scen.brainCfg});   // brainCfg.dt may override
   loggedEvents=0;simT=0;learning=false;chartData=[];
   const N=scen.metric.winCount||
           Math.max(8,Math.round(scen.metric.winSec/scen.dt));
@@ -3495,21 +3507,74 @@ function tick(now){
 /* ============ automation hook: the testbench API ============ */
 window.bench={
   list:()=>SCENARIOS.map(s=>s.id),
-  /* run(id, secs): baseline 30 s + learn `secs`, returns metrics */
-  run(id,secs){
+  _measure(){
+    const r={plain:+(ringP.rms()*scen.metric.scale).toFixed(3),
+      brain:+(ringB.rms()*scen.metric.scale).toFixed(3),
+      pct:+(ringB.rms()/Math.max(ringP.rms(),1e-12)*100).toFixed(1),
+      alpha:+brain.meanAlpha().toFixed(2),units:brain.n,
+      nan:brain.nanEvents};
+    if(scen.stats)r.stats=scen.stats();
+    return r},
+  _applyCh(opts){
+    if(opts&&opts.ch)for(const c of scen.challenges||[])
+      if(opts.ch[c.id]!==undefined)c.apply(opts.ch[c.id])},
+  /* run(id, secs, opts): baseline 30 s + learn `secs`. opts.seed offsets
+     every RNG in the rig (default 0 = the historical board); opts.ch =
+     {challengeId: value} overrides challenge sliders for this run. */
+  run(id,secs,opts){
+    window.BENCHSEED=(opts&&opts.seed)|0;
+    const fb=window.FORCE_BRAIN;
+    if(opts&&opts.brain)window.FORCE_BRAIN=opts.brain;
     selectScenario(id);
+    this._applyCh(opts);
     const n0=Math.round(30/scen.dt);
     for(let i=0;i<n0;i++)controlTick();
     const p0=ringP.rms()*scen.metric.scale;
     setLearning(true);
     const n1=Math.round(secs/scen.dt);
     for(let i=0;i<n1;i++)controlTick();
-    return{scenario:id,baseline:+p0.toFixed(3),
-      plain:+(ringP.rms()*scen.metric.scale).toFixed(3),
-      brain:+(ringB.rms()*scen.metric.scale).toFixed(3),
-      pct:+(ringB.rms()/Math.max(ringP.rms(),1e-12)*100).toFixed(1),
-      alpha:+brain.meanAlpha().toFixed(2),units:brain.n,
-      nan:brain.nanEvents,unit:scen.metric.unit}}
+    const r={scenario:id,secs,seed:window.BENCHSEED,
+      brainV:brain instanceof BrainV2?'v2':'v1',
+      baseline:+p0.toFixed(3),...this._measure(),unit:scen.metric.unit};
+    window.BENCHSEED=0;window.FORCE_BRAIN=fb;
+    return r},
+  /* runBlocks(id, blockSecs, nBlocks, opts): baseline 30 s, then sample
+     the metric window + scenario stats after every block. Stats are
+     cumulative snapshots — diff consecutive blocks for per-block rates. */
+  runBlocks(id,blockSecs,nBlocks,opts){
+    window.BENCHSEED=(opts&&opts.seed)|0;
+    const fb=window.FORCE_BRAIN;
+    if(opts&&opts.brain)window.FORCE_BRAIN=opts.brain;
+    selectScenario(id);
+    this._applyCh(opts);
+    const n0=Math.round(30/scen.dt);
+    for(let i=0;i<n0;i++)controlTick();
+    setLearning(true);
+    const blocks=[];
+    for(let b=0;b<nBlocks;b++){
+      const n1=Math.round(blockSecs/scen.dt);
+      for(let i=0;i<n1;i++)controlTick();
+      blocks.push({block:b,...this._measure()})}
+    const r={scenario:id,seed:window.BENCHSEED,blockSecs,blocks,
+      brainV:brain instanceof BrainV2?'v2':'v1',unit:scen.metric.unit};
+    window.BENCHSEED=0;window.FORCE_BRAIN=fb;
+    return r},
+  /* sweep(jobs): async queue — each job {fn:'run'|'runBlocks',args:[...]}.
+     Results accumulate on window.__SWEEP while the page stays live. */
+  sweep(jobs){
+    window.__SWEEP={done:0,total:jobs.length,results:[],running:true};
+    const S=window.__SWEEP;
+    const step=()=>{
+      if(!S.running||S.done>=S.total){S.running=false;return}
+      const j=jobs[S.done],t0=performance.now();
+      let r;try{r=bench[j.fn||'run'](...j.args)}
+      catch(e){r={error:String(e),job:j}}
+      r.tag=j.tag;r.wallMs=Math.round(performance.now()-t0);
+      S.results.push(r);S.done++;
+      setTimeout(step,25)};
+    setTimeout(step,0);
+    return'sweep started: '+jobs.length+' jobs'},
+  stop(){if(window.__SWEEP)window.__SWEEP.running=false}
 };
 
 selectScenario(SCENARIOS[0].id);
