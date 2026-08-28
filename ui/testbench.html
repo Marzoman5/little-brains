@@ -2142,7 +2142,7 @@ SCENARIOS.push({
   let seqRng=null,garbRng=null,seq=[];
   let hostSkill=1,previewOn=true,garbEvery=0;
   let P=null,B=null,tickI=0,pieces=0;
-  const scratch=new Uint8Array(BW*BH);
+  const scratch=new Uint8Array(BW*BH),scratch2=new Uint8Array(BW*BH);
 
   function pieceAt(i){
     while(seq.length<=i+1){          // +1: the preview channel needs next
@@ -2224,8 +2224,24 @@ SCENARIOS.push({
     const cleared=applyPlace(scratch,rot,x0,base).length;
     const f=scanFeat(scratch);
     const landH=base+(rot.h-1)/2;               // Dellacherie midpoint
-    const full=HW.lines*cleared+HW.agg*f.agg+HW.holes*f.holes
-      +HW.bump*f.bump+HW.well*f.well;
+    /* 2-ply search (owner direction 2026-08-28): each placement is valued
+       by its BEST known-next-piece continuation, judged on the final
+       board — both twins search, so coral-vs-gray still isolates the
+       brain. A placement the next piece cannot survive scores -1e9. */
+    let best2=-1e9;
+    const pc2=PIECES[nxt];
+    for(const rot2 of pc2.rots)
+      for(let x2=0;x2<=BW-rot2.w;x2++){
+        const b2=dropBase(f.hh,rot2,x2);
+        if(b2+rot2.h>BH)continue;
+        scratch2.set(scratch);
+        const cl2=applyPlace(scratch2,rot2,x2,b2).length;
+        const f2=scanFeat(scratch2);
+        const v=HW.lines*cl2+HW.agg*f2.agg+HW.holes*f2.holes
+          +HW.bump*f2.bump+HW.well*f2.well;
+        if(v>best2)best2=v;
+      }
+    const full=HW.lines*cleared+best2;
     const host=hostSkill*full+(1-hostSkill)*(-landH);
     /* afterstate context, raw values (the brain normalizes). The one-hot
        NEXT-piece channels are the point: a fixed heuristic cannot condition
