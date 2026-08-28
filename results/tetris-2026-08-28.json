@@ -1,0 +1,104 @@
+{
+  "meta": {
+    "date": "2026-08-28",
+    "instrument": "bench.runBlocks('tetris',200,3,{seed,ch,brain}) - browser rig, Chrome, 630 s per run (30 s baseline + 3x200 s learning), 2625 pieces per twin per run",
+    "commit_predictions": "839db21 (before any learning run)",
+    "commit_fix": "7bf5880 (reward-ring desync; no measurement accepted before it)",
+    "fields": "pct = per-block metric-window ratio (brain/plain RMS of per-25-piece err, winCount 12); lines/deaths cumulative at block 3",
+    "note": "pct is death-dominated: plain window RMS ~0.7-1 pt, one brain death (+20 pt) in the 12-window measurement window sends pct to 300-800. The paired cumulative lines/deaths are the honest readout."
+  },
+  "arms": {
+    "def": {
+      "desc": "default: host skill 100%, preview on, no garbage, V2",
+      "runs": [
+        {"seed": 0, "pct": [158.1, 124.7, 125.8], "linesP": 1047, "deathsP": 0, "linesB": 1046, "deathsB": 0},
+        {"seed": 1, "pct": [15.8, 116.3, 173.2], "linesP": 1010, "deathsP": 2, "linesB": 1044, "deathsB": 0},
+        {"seed": 2, "pct": [115.5, 633.9, 89.1], "linesP": 1040, "deathsP": 0, "linesB": 1012, "deathsB": 2},
+        {"seed": 3, "pct": [1673.3, 147.7, 97.2], "linesP": 1047, "deathsP": 0, "linesB": 1028, "deathsB": 1},
+        {"seed": 4, "pct": [137.6, 505.9, 79.1], "linesP": 1045, "deathsP": 0, "linesB": 1008, "deathsB": 2},
+        {"seed": 5, "pct": [83.7, 83.7, 65.0], "linesP": 1021, "deathsP": 1, "linesB": 1028, "deathsB": 1},
+        {"seed": 6, "pct": [129.9, 18.5, 60.7], "linesP": 1029, "deathsP": 1, "linesB": 1047, "deathsB": 0},
+        {"seed": 7, "pct": [12.7, 73.2, 771.4], "linesP": 1029, "deathsP": 1, "linesB": 1031, "deathsB": 1},
+        {"seed": 8, "pct": [125.4, 223.6, 131.9], "linesP": 1048, "deathsP": 0, "linesB": 1037, "deathsB": 0},
+        {"seed": 9, "pct": [82.5, 57.7, 108.7], "linesP": 1012, "deathsP": 2, "linesB": 1013, "deathsB": 2}
+      ],
+      "totals": {"linesP": 10328, "deathsP": 7, "linesB": 10294, "deathsB": 9, "block3PctMedian": 103.0, "block3Wins": 5}
+    },
+    "noprev": {
+      "desc": "preview channels zeroed (THE mechanism ablation), host 100%",
+      "runs": [
+        {"seed": 0, "pct": [138.4, 86.1, 81.6], "linesP": 1047, "deathsP": 0, "linesB": 1010, "deathsB": 2},
+        {"seed": 1, "pct": [7.1, 102.9, 153.5], "linesP": 1010, "deathsP": 2, "linesB": 1028, "deathsB": 1},
+        {"seed": 2, "pct": [241.5, 125.0, 453.7], "linesP": 1040, "deathsP": 0, "linesB": 995, "deathsB": 3},
+        {"seed": 3, "pct": [223.6, 170.6, 85.0], "linesP": 1047, "deathsP": 0, "linesB": 1049, "deathsB": 0},
+        {"seed": 4, "pct": [112.4, 498.6, 81.0], "linesP": 1045, "deathsP": 0, "linesB": 1028, "deathsB": 1},
+        {"seed": 5, "pct": [63.2, 83.7, 55.5], "linesP": 1021, "deathsP": 1, "linesB": 1046, "deathsB": 0},
+        {"seed": 6, "pct": [93.5, 22.1, 112.4], "linesP": 1029, "deathsP": 1, "linesB": 1010, "deathsB": 2},
+        {"seed": 7, "pct": [20.2, 137.6, 151.7], "linesP": 1029, "deathsP": 1, "linesB": 1026, "deathsB": 1},
+        {"seed": 8, "pct": [92.6, 173.2, 72.2], "linesP": 1048, "deathsP": 0, "linesB": 1024, "deathsB": 1},
+        {"seed": 9, "pct": [107.7, 109.1, 131.4], "linesP": 1012, "deathsP": 2, "linesB": 1025, "deathsB": 1}
+      ],
+      "totals": {"linesP": 10328, "deathsP": 7, "linesB": 10241, "deathsB": 12, "block3PctMedian": 98.7, "block3Wins": 5}
+    },
+    "h50": {
+      "desc": "host skill 50% (lerp toward height-only-greedy), preview on",
+      "runs": [
+        {"seed": 0, "pct": [102.9, 13.2, 23.6], "linesP": 923, "deathsP": 7, "linesB": 974, "deathsB": 4},
+        {"seed": 1, "pct": [92.4, 99.8, 310.6], "linesP": 913, "deathsP": 7, "linesB": 916, "deathsB": 7},
+        {"seed": 2, "pct": [108.0, 90.7, 414.6], "linesP": 955, "deathsP": 5, "linesB": 954, "deathsB": 5},
+        {"seed": 3, "pct": [16.3, 461.1, 93.7], "linesP": 939, "deathsP": 6, "linesB": 977, "deathsB": 4},
+        {"seed": 4, "pct": [575.4, 98.1, 100.6], "linesP": 953, "deathsP": 5, "linesB": 944, "deathsB": 6},
+        {"seed": 5, "pct": [146.2, 130.6, 117.5], "linesP": 927, "deathsP": 7, "linesB": 931, "deathsB": 6},
+        {"seed": 6, "pct": [14.8, 25.3, 90.1], "linesP": 951, "deathsP": 5, "linesB": 949, "deathsB": 5},
+        {"seed": 7, "pct": [136.4, 85.5, 326.4], "linesP": 964, "deathsP": 4, "linesB": 912, "deathsB": 7},
+        {"seed": 8, "pct": [824.3, 20.7, 553.0], "linesP": 930, "deathsP": 6, "linesB": 938, "deathsB": 6},
+        {"seed": 9, "pct": [555.0, 100.0, 72.8], "linesP": 959, "deathsP": 5, "linesB": 954, "deathsB": 5}
+      ],
+      "totals": {"linesP": 9414, "deathsP": 57, "linesB": 9449, "deathsB": 55, "block3PctMedian": 109.1, "block3Wins": 4}
+    },
+    "h50noprev": {
+      "desc": "host 50% AND preview channels zeroed",
+      "runs": [
+        {"seed": 0, "pct": [144.8, 95.8, 140.9], "linesP": 923, "deathsP": 7, "linesB": 841, "deathsB": 12},
+        {"seed": 1, "pct": [89.4, 99.1, 316.8], "linesP": 913, "deathsP": 7, "linesB": 955, "deathsB": 5},
+        {"seed": 2, "pct": [106.1, 96.5, 428.7], "linesP": 955, "deathsP": 5, "linesB": 955, "deathsB": 5},
+        {"seed": 3, "pct": [27.4, 646.1, 22.9], "linesP": 939, "deathsP": 6, "linesB": 933, "deathsB": 6},
+        {"seed": 4, "pct": [849.5, 107.1, 93.9], "linesP": 953, "deathsP": 5, "linesB": 897, "deathsB": 8},
+        {"seed": 5, "pct": [114.8, 102.7, 24.8], "linesP": 927, "deathsP": 7, "linesB": 921, "deathsB": 7},
+        {"seed": 6, "pct": [37.4, 28.2, 355.3], "linesP": 951, "deathsP": 5, "linesB": 922, "deathsB": 7},
+        {"seed": 7, "pct": [97.2, 88.3, 332.2], "linesP": 964, "deathsP": 4, "linesB": 922, "deathsB": 7},
+        {"seed": 8, "pct": [586.2, 101.6, 93.7], "linesP": 930, "deathsP": 6, "linesB": 986, "deathsB": 3},
+        {"seed": 9, "pct": [770.7, 504.8, 70.2], "linesP": 959, "deathsP": 5, "linesB": 902, "deathsB": 8}
+      ],
+      "totals": {"linesP": 9414, "deathsP": 57, "linesB": 9234, "deathsB": 68, "block3PctMedian": 117.4, "block3Wins": 5}
+    },
+    "v1": {
+      "desc": "FORCE_BRAIN v1, default settings",
+      "runs": [
+        {"seed": 0, "pct": [122.5, 79.3, 122.5], "linesP": 1047, "deathsP": 0, "linesB": 1010, "deathsB": 2},
+        {"seed": 1, "pct": [26.1, 113.8, 666.5], "linesP": 1010, "deathsP": 2, "linesB": 996, "deathsB": 3}
+      ]
+    },
+    "v1h50": {
+      "desc": "FORCE_BRAIN v1 at host 50%",
+      "runs": [
+        {"seed": 0, "pct": [25.2, 98.8, 107.4], "linesP": 923, "deathsP": 7, "linesB": 917, "deathsB": 7},
+        {"seed": 1, "pct": [16.1, 11.1, 297.2], "linesP": 913, "deathsP": 7, "linesB": 995, "deathsB": 3}
+      ]
+    },
+    "garb10": {
+      "desc": "garbage row every 10 pieces, host 100%",
+      "runs": [
+        {"seed": 0, "pct": [73.2, 93.5, 66.4], "linesP": 1010, "deathsP": 15, "linesB": 1046, "deathsB": 13},
+        {"seed": 1, "pct": [141.0, 62.4, 135.7], "linesP": 1023, "deathsP": 14, "linesB": 1039, "deathsB": 14},
+        {"seed": 2, "pct": [65.0, 103.3, 98.4], "linesP": 1019, "deathsP": 15, "linesB": 1007, "deathsB": 15}
+      ],
+      "totals": {"linesP": 3052, "deathsP": 44, "linesB": 3092, "deathsB": 42}
+    }
+  },
+  "probes": {
+    "run240_seed0": {"pct": 122.5, "alpha": 0.49, "health": {"wf": 49.5508, "ws": 2.1582, "clampFrac": 0.1094, "oCap": 0.49}, "linesP": 444, "deathsP": 0, "linesB": 444, "deathsB": 0},
+    "saturation": "after 240 s: raw prediction at the +2 output clamp for hand-made good AND bad afterstates (reads 0.98 = oCap 0.49 x clamp 2.0 across all 7 next-piece one-hots); in-distribution across 29 live decisions: reads span 0.03-0.98 with median per-decision spread 0.495, but the MAJORITY of candidates sit at the 0.98 rail - the value function is positively saturated and acts as an occasional veto, not a ranker",
+    "nan_events": "0 across all 47 runs (post 7bf5880)"
+  }
+}

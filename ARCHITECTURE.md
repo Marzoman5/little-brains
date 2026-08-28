@@ -1,14 +1,14 @@
 # Architecture reference — current state (V2.1, 2026-08-26)
 
 The single source of truth is `ui/testbench.html` (one self-contained file:
-two brain classes + ten scenarios + harness). The Python library `cereb/`
+two brain classes + eleven scenarios + harness). The Python library `cereb/`
 is V1-era with partial back-ports and is NOT current — treat it as legacy
 until someone back-ports BrainV2 or formally deprecates it.
 Deployment map + cost table + standing limitations: `docs/APPLICATIONS.md`.
 
 ## Files
 
-- `ui/testbench.html` — THE artifact. Brain (V1), BrainV2, 9 scenarios,
+- `ui/testbench.html` — THE artifact. Brain (V1), BrainV2, 11 scenarios,
   harness, bench API. Published at
   https://claude.ai/code/artifact/98ac362a-9080-4535-9bf6-f9e41f060d4c
 - `ui/explained.html` — the public explainer / landing page.
@@ -99,6 +99,10 @@ basis seed (finding 22).
 balance 11.8+-1.8 | path 16.4+-2.8 | car 18.4+-4.5 | flight 11.1+-1.8 |
 rover 12.5+-6.8 (blind-context 15.3+-7.4; finding 33) |
 launcher 38.9+-7.0 | maze 100.5+-1.9 (harm eliminated, finding 31) |
+tetris ~tie at every difficulty (finding 38: cumulative lines coral vs
+gray -0.3% full host / +0.4% host-50%, deaths ~equal; the pct window
+metric is death-dominated — read the paired lines/deaths stats; preview
+channels are load-bearing for harmlessness, not for a win) |
 fight winrate/500s-block 68/89/93 | one-mind hive /200s-block 78/93/95 |
 gossip-20s 64/91/93 vs isolated 56/87/89.
 V1 reference: balance 45.5+-2.1 | path 60.1+-3.6 | car 55.5+-4.3 |

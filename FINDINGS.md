@@ -320,3 +320,66 @@ regressed; two mechanisms and one constant removed.
     blind): stage-wise golden vectors from lb.c — basis codes, then
     eligibility, then NLMS deltas, then gate rho, verified one stage at
     a time. M0+-and-up targets are served TODAY by lb.c.
+
+## The Tetris batch (2026-08-28) — mapping the decision-mode boundary
+
+38. **Tetris: the cerebellum TIES its host at every difficulty, and the
+    mechanism is named — value saturation plus a credit horizon that
+    cannot price a buried hole.** New scenario (predictions committed
+    first at 839db21): 10x20 board, shared seeded 7-bag, gray twin = a
+    frozen Dellacherie/Lee linear afterstate heuristic, coral = same +
+    one brain read per candidate placement (nCtx 22 incl. one-hot NEXT
+    piece, nOut 1, argmax(host+read), outcome-only reward 3·lines²
+    −30·death−0.05, 3-piece discounted teach per findings 19/21).
+    MEASURED (runBlocks 200x3, 2625 pieces/run, 10 seeds, raw in
+    results/tetris-2026-08-28.json): cumulative lines coral vs gray
+    −0.3% at full host (10294 vs 10328, deaths 9 vs 7), +0.4% at host
+    50% (9449 vs 9414, deaths 55 vs 57), +1.3% under garbage (3 seeds).
+    No arm beats its twin beyond noise; V1 ties too (4 runs). Predicted
+    the full-host tie in advance (the host sits at 98.5% of the 0.4
+    lines/piece ceiling); predicted a 60-90 pct win at host-50% — WRONG,
+    and the diagnosis is the finding: (a) after 240 s the learned value
+    rails at the +2 output clamp for MOST candidates (in-distribution:
+    majority of reads at the rail, median per-decision spread 0.5) —
+    line-clear targets (+3/+12/+27/+48) drag every weight up against the
+    projection box (clampFrac 11%) faster than the 0.9995 leak bleeds
+    them, so V̂ degenerates into a saturated occasional-veto that mostly
+    adds a CONSTANT to every candidate: argmax unchanged, brain ≡ host.
+    (b) What's left to learn inside r0+0.6r1+0.36r2 is almost exactly
+    what the host already scores: a buried hole costs its lines 20-50
+    pieces later, far past the horizon, so the brain has no signal the
+    host lacks (finding 21's multi-step gap, now with a price tag).
+    (c) The pct metric itself is death-dominated (plain window RMS
+    ~0.7-1 pt; one +20 death spike → pct 300-800) — per-seed pct at
+    fixed horizons is a death lottery; the paired cumulative stats are
+    the honest readout. The preview one-hot channels DO carry signal,
+    but defensively: at host-50%, preview-off costs 215 lines and +13
+    deaths vs preview-on (7/10 seeds worse) — without the next-piece
+    channels the same afterstate is taught toward different outcomes
+    and the interference makes the brain actively harmful, with them it
+    is merely inert. Finding 15 sharpened: context channels can be
+    load-bearing for HARMLESSNESS even when they buy no win. Bonus: the
+    outcome watchdog (finding 31) works unmodified in a second
+    decision-mode scenario — it capped authority at ~0.49 on the seeds
+    where exploration caused window-cost spikes, with zero NaN across
+    47 runs. Ceiling map: this scenario needs either reward scaled into
+    the clamp's linear range, a longer/eligibility-based credit
+    horizon, or per-candidate advantage teaching (target minus the
+    chosen sibling's outcome) before real skill can appear — all three
+    are named, none is licensed by today's data.
+
+39. **A decision-mode teach pipeline needs its bookkeeping invariant
+    enforced at the data-entry site — and NaN-guard resets can
+    masquerade as a perfect tie.** First accepted tetris run: pct
+    exactly 100/100/100 with the coral twin byte-identical to gray for
+    2625 pieces. Cause: runBlocks flips learning on right after the
+    baseline, between a cycle's choose and lock; the reward ring's base
+    index desynced by one, every matured record read one slot past the
+    end, target=NaN, and the brain's NaN guard silently reset weights
+    to zero on EVERY teach — the twin replayed its host move for move.
+    The twins doctrine caught it (exactly-equal cumulative lines is a
+    fingerprint of a dead learner, not a fair tie); the fix is a
+    one-line invariant check where rewards are pushed (7bf5880).
+    Corollary for the certification story: a NaN-guard trip is a loud
+    event in telemetry but invisible in behavior — count nanEvents in
+    every acceptance gate.
