@@ -102,7 +102,7 @@
     <span class="tag" id="simclock">t = 0.0 s</span>
     <select id="simspeed"><option value="1" selected>1×</option>
       <option value="2">2×</option><option value="5">5×</option>
-      <option value="10">10×</option></select>
+      <option value="10">10×</option><option value="50">50×</option></select>
     <button id="pause">Pause</button>
     <button id="resetbrain">Reset brain</button>
   </div>
@@ -2160,12 +2160,16 @@ SCENARIOS.push({
 
   // full afterstate scan: heights, holes, bumpiness, wells, transitions
   function scanFeat(g){
-    const hh=[];let holes=0,agg=0,maxH=0;
+    const hh=[];let holes=0,agg=0,maxH=0,burden=0;
     for(let x=0;x<BW;x++){
       let ht=0;
       for(let y=BH-1;y>=0;y--)if(g[y*BW+x]){ht=y+1;break}
       hh.push(ht);agg+=ht;if(ht>maxH)maxH=ht;
-      for(let y=0;y<ht;y++)if(!g[y*BW+x])holes++;
+      let seenHole=false;
+      for(let y=0;y<ht;y++){
+        if(!g[y*BW+x]){holes++;seenHole=true}
+        else if(seenHole)burden++;   // cells sitting on top of holes: the
+      }                              // cost the 3-piece horizon can't see
     }
     let bump=0;
     for(let x=0;x<BW-1;x++)bump+=Math.abs(hh[x]-hh[x+1]);
@@ -2186,7 +2190,7 @@ SCENARIOS.push({
       for(let y=0;y<BH;y++){const c=g[y*BW+x]?1:0;if(c!==prev)colT++;prev=c}
       if(prev===1)colT++;
     }
-    return{hh,holes,agg,bump,maxH,well,rowT,colT};
+    return{hh,holes,agg,bump,maxH,well,rowT,colT,burden};
   }
 
   // hard-drop base row for rot at column x0 (row 0 = bottom)
@@ -2213,7 +2217,7 @@ SCENARIOS.push({
   }
 
   // one candidate: simulate the drop, afterstate features, host score, ctx
-  function evalCand(g,hh,holes0,rot,x0,nxt){
+  function evalCand(g,hh,holes0,rot,x0,nxt,nxt2){
     const base=dropBase(hh,rot,x0);
     if(base+rot.h>BH)return null;               // overflow: illegal
     scratch.set(g);
@@ -2227,7 +2231,7 @@ SCENARIOS.push({
        NEXT-piece channels are the point: a fixed heuristic cannot condition
        on the preview; the brain can (finding 15: context is where domain
        knowledge lives). 17 live + 5 spare channels. */
-    const ctx=new Float64Array(30);
+    const ctx=new Float64Array(37);
     ctx[0]=landH;ctx[1]=cleared;ctx[2]=f.holes;ctx[3]=f.holes-holes0;
     ctx[4]=f.bump;ctx[5]=f.agg/20;ctx[6]=f.well;ctx[7]=f.rowT;ctx[8]=f.colT;
     ctx[9]=f.maxH>=16?1:0;                      // death-imminent flag
@@ -2237,6 +2241,8 @@ SCENARIOS.push({
        the shape the next piece has to fit */
     let mn=f.hh[0];for(let x=1;x<BW;x++)if(f.hh[x]<mn)mn=f.hh[x];
     for(let x=0;x<BW;x++)ctx[17+x]=(f.hh[x]-mn)/4;
+    ctx[27]=f.burden;                           // buried-cell burden
+    if(previewOn)ctx[30+nxt2]=1;                // second-piece preview
     return{rot,x0,base,cleared,host,ctx};
   }
 
@@ -2277,12 +2283,12 @@ SCENARIOS.push({
 
   // enumerate all hard-drop placements; choice = argmax(host + brain read)
   function choose(t,brain,learning,pi){
-    const pc=PIECES[pieceAt(pi)],nxt=pieceAt(pi+1);
+    const pc=PIECES[pieceAt(pi)],nxt=pieceAt(pi+1),nxt2=pieceAt(pi+2);
     const f0=scanFeat(t.grid);
     const cands=[];
     for(const rot of pc.rots)
       for(let x0=0;x0<=BW-rot.w;x0++){
-        const cd=evalCand(t.grid,f0.hh,f0.holes,rot,x0,nxt);
+        const cd=evalCand(t.grid,f0.hh,f0.holes,rot,x0,nxt,nxt2);
         if(cd)cands.push(cd);
       }
     if(!cands.length)return null;               // no legal placement
@@ -2384,7 +2390,7 @@ SCENARIOS.push({
     id:'tetris',name:'Tetris',
     blurb:'The hardest decision exhibit. Two boards, one shared piece stream, one frozen textbook placement heuristic on both. The coral board adds a learned score to every candidate placement — and its context can see the NEXT piece, which no fixed one-piece heuristic can use. Reward is outcomes only: lines cleared and top-outs.',
     dt:DT,
-    brainCfg:{nCtx:30,nOut:1,authority:8,tauOut:0,dt:0.5,gate:false,
+    brainCfg:{nCtx:37,nOut:1,authority:8,tauOut:0,dt:0.5,gate:false,
               n0:512,tauElig:0.02,rbCap:256,v2:true},
     metric:{label:'Stack trouble / 25 pieces',unit:'pt',scale:1,
             winCount:12,winSec:20},
