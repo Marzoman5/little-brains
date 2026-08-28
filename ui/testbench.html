@@ -2088,8 +2088,8 @@ SCENARIOS.push({
   // algorithm"); the coral twin adds a learned score read to every candidate
   // placement — and its context includes the NEXT piece, which a fixed
   // one-piece heuristic cannot use. Teaching is outcome-only (lines cleared,
-  // deaths), 3-piece discounted credit taught once per record (findings
-  // 19/21), novelty exploration (finding 20), sticky host incumbent
+  // deaths), on-policy afterstate TD(0) credit (finding 19 for fresh
+  // reads), novelty exploration (finding 20), sticky host incumbent
   // (finding 11). Byte-identical twins until the switch flips: the brain is
   // read from t=0 but zero-init weights add exactly 0 to every candidate.
   function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
@@ -2155,7 +2155,7 @@ SCENARIOS.push({
   }
 
   function mkTwin(){return{grid:new Uint8Array(BW*BH),lines:0,deaths:0,
-    winLines:0,winDeaths:0,placeN:0,recs:[],rews:[],rewBase:0,
+    winLines:0,winDeaths:0,placeN:0,lastCtx:null,
     pend:null,anim:null,flashRows:null,flashT:0,deathT:0}}
 
   // full afterstate scan: heights, holes, bumpiness, wells, transitions
@@ -2267,36 +2267,12 @@ SCENARIOS.push({
     const cur=brain.step(ctx,0,false)[0];
     brain.step(ctx,target-cur,true);
   }
-  // teach each record once when 6 pieces old: target = sum 0.7^i * r_i,
-  // outcome rewards only (finding 21: no bootstrap). Horizon lengthened
-  // from 3 (owner direction 2026-08-28): the burden channel carries the
-  // long-cost signal, the discounted sum now reaches far enough to see it
-  function teachMature(t,brain){
-    while(t.recs.length&&t.placeN>=t.recs[0].k+6){
-      const rec=t.recs.shift(),i=rec.k-t.rewBase;
-      if(i<0||i+5>=t.rews.length)continue;   // defensive: never NaN-teach
-      let tg=0,d=1;
-      for(let k2=0;k2<6;k2++){tg+=d*t.rews[i+k2];d*=0.7}
-      teachOne(brain,rec.ctx,tg);
-    }
-    const keepFrom=t.recs.length?t.recs[0].k:t.placeN;
-    while(t.rewBase<keepFrom&&t.rews.length){t.rews.shift();t.rewBase++}
-  }
-
-  // top-out: the −30 lands on the last placement, pending records get
-  // flush-taught with whatever reward is known, board resets, play goes on
+  // top-out: terminal teach (no bootstrap past death), board resets,
+  // play goes on
   function die(t,brain,learning){
     t.deaths++;t.winDeaths++;t.deathT=CYC;
-    if(learning&&brain){
-      if(t.rews.length)t.rews[t.rews.length-1]-=10;
-      for(const rec of t.recs){
-        let target=0,d=1;
-        for(let i=rec.k-t.rewBase;i<t.rews.length;i++){
-          target+=d*t.rews[i];d*=0.7}
-        teachOne(brain,rec.ctx,target);
-      }
-    }
-    t.recs.length=0;t.rews.length=0;t.rewBase=t.placeN;
+    if(learning&&brain&&t.lastCtx)teachOne(brain,t.lastCtx,-10);
+    t.lastCtx=null;
     t.grid.fill(0);t.pend=null;t.anim=null;
   }
 
@@ -2331,20 +2307,20 @@ SCENARIOS.push({
     if(rows.length){t.flashRows=rows;t.flashT=8;
       t.lines+=rows.length;t.winLines+=rows.length}
     if(learning&&brain){
-      /* alignment invariant: rews[k - rewBase] is placement k's reward.
-         A lock without a push (learning flipped mid-cycle, e.g. right
-         after the bench baseline) breaks it and every later teach would
-         read past the end (NaN target -> NaN-guard reset loop) — resync
-         the ring instead of trusting the choose-phase reset alone. */
-      if(t.rewBase+t.rews.length!==t.placeN){
-        t.recs.length=0;t.rews.length=0;t.rewBase=t.placeN}
-      t.recs.push({ctx:cand.ctx,k:t.placeN});
-      if(t.recs.length>8)t.recs.shift();         // ring of last ~8
-      // outcome-based reward ONLY (board features in r would be rigging).
-      // Linear in lines and scaled to the output clamp: the 3*lines^2
-      // scale railed the value function at +clamp for every candidate
-      // (finding 38's saturation) and erased the ranking
-      t.rews.push(rows.length-0.02);
+      /* on-policy afterstate TD(0), replacing the fixed-window Monte-
+         Carlo ring (owner direction 2026-08-28: MC targets were mostly
+         piece luck). Teach the previous chosen afterstate toward
+         r + 0.8*V(new afterstate), fresh reads both times (finding 19).
+         Bootstrap averages out the bag; death and buried-hole costs
+         propagate backward through chained values instead of dying at a
+         fixed horizon. Reward stays outcome-only (lines, death); with
+         gamma 0.8 the steady-state value ~1.9 sits inside the +-4 clamp.
+         Deliberately revisits finding 21 (fighter TD failed): afterstate
+         TD is the canonical Tetris learner - the bench is the judge. */
+      const r=rows.length-0.02;
+      const vNext=brain.step(cand.ctx,0,false)[0];
+      if(t.lastCtx)teachOne(brain,t.lastCtx,r+0.8*vNext);
+      t.lastCtx=cand.ctx;
     }
     t.placeN++;
   }
@@ -2410,7 +2386,7 @@ SCENARIOS.push({
     blurb:'The hardest decision exhibit. Two boards, one shared piece stream, one frozen textbook placement heuristic on both. The coral board adds a learned score to every candidate placement — and its context can see the NEXT piece, which no fixed one-piece heuristic can use. Reward is outcomes only: lines cleared and top-outs.',
     dt:DT,
     brainCfg:{nCtx:37,nOut:1,authority:8,tauOut:0,dt:0.5,gate:false,
-              n0:512,tauElig:0.02,rbCap:256,v2:true},
+              n0:768,tauElig:0.02,rbCap:256,v2:true},
     metric:{label:'Stack trouble / 25 pieces',unit:'pt',scale:1,
             winCount:12,winSec:20},
     challenges:[
@@ -2437,11 +2413,9 @@ SCENARIOS.push({
       if(ph===0){
         P.pend=choose(P,null,false,pieces);
         if(!P.pend)die(P,null,false);
-        // coral: teach matured records FIRST, then read+choose (finding 19:
-        // choices must use post-teach scores)
-        if(!learning&&(B.recs.length||B.rews.length)){
-          B.recs.length=0;B.rews.length=0;B.rewBase=B.placeN}
-        if(learning)teachMature(B,brain);
+        // TD teaching happens at lock; choices next cycle use post-teach
+        // scores (finding 19)
+        if(!learning)B.lastCtx=null;
         B.pend=choose(B,brain,learning,pieces);
         if(!B.pend)die(B,brain,learning);
         if(P.pend)P.anim={cand:P.pend,t0:tickI};
