@@ -2245,6 +2245,7 @@ SCENARIOS.push({
   function teachMature(t,brain){
     while(t.recs.length&&t.placeN>=t.recs[0].k+3){
       const rec=t.recs.shift(),i=rec.k-t.rewBase;
+      if(i<0||i+2>=t.rews.length)continue;   // defensive: never NaN-teach
       teachOne(brain,rec.ctx,
         t.rews[i]+0.6*t.rews[i+1]+0.36*t.rews[i+2]);
     }
@@ -2300,6 +2301,13 @@ SCENARIOS.push({
     if(rows.length){t.flashRows=rows;t.flashT=8;
       t.lines+=rows.length;t.winLines+=rows.length}
     if(learning&&brain){
+      /* alignment invariant: rews[k - rewBase] is placement k's reward.
+         A lock without a push (learning flipped mid-cycle, e.g. right
+         after the bench baseline) breaks it and every later teach would
+         read past the end (NaN target -> NaN-guard reset loop) — resync
+         the ring instead of trusting the choose-phase reset alone. */
+      if(t.rewBase+t.rews.length!==t.placeN){
+        t.recs.length=0;t.rews.length=0;t.rewBase=t.placeN}
       t.recs.push({ctx:cand.ctx,k:t.placeN});
       if(t.recs.length>8)t.recs.shift();         // ring of last ~8
       // outcome-based reward ONLY (board features in r would be rigging)
