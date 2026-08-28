@@ -102,8 +102,8 @@
     <span class="tag" id="simclock">t = 0.0 s</span>
     <select id="simspeed"><option value="1" selected>1×</option>
       <option value="2">2×</option><option value="5">5×</option>
-      <option value="10">10×</option><option value="50">50×</option></select>
-    <button id="pause">Pause</button>
+      <option value="10">10×</option></select>
+    <button id="pause">Run</button>
     <button id="resetbrain">Reset brain</button>
   </div>
   <div class="main">
@@ -2267,14 +2267,17 @@ SCENARIOS.push({
     const cur=brain.step(ctx,0,false)[0];
     brain.step(ctx,target-cur,true);
   }
-  // teach each record once when 3 pieces old: target = r0+0.6·r1+0.36·r2,
-  // outcome rewards only (finding 21: no one-step bootstrap)
+  // teach each record once when 6 pieces old: target = sum 0.7^i * r_i,
+  // outcome rewards only (finding 21: no bootstrap). Horizon lengthened
+  // from 3 (owner direction 2026-08-28): the burden channel carries the
+  // long-cost signal, the discounted sum now reaches far enough to see it
   function teachMature(t,brain){
-    while(t.recs.length&&t.placeN>=t.recs[0].k+3){
+    while(t.recs.length&&t.placeN>=t.recs[0].k+6){
       const rec=t.recs.shift(),i=rec.k-t.rewBase;
-      if(i<0||i+2>=t.rews.length)continue;   // defensive: never NaN-teach
-      teachOne(brain,rec.ctx,
-        t.rews[i]+0.6*t.rews[i+1]+0.36*t.rews[i+2]);
+      if(i<0||i+5>=t.rews.length)continue;   // defensive: never NaN-teach
+      let tg=0,d=1;
+      for(let k2=0;k2<6;k2++){tg+=d*t.rews[i+k2];d*=0.7}
+      teachOne(brain,rec.ctx,tg);
     }
     const keepFrom=t.recs.length?t.recs[0].k:t.placeN;
     while(t.rewBase<keepFrom&&t.rews.length){t.rews.shift();t.rewBase++}
@@ -2289,7 +2292,7 @@ SCENARIOS.push({
       for(const rec of t.recs){
         let target=0,d=1;
         for(let i=rec.k-t.rewBase;i<t.rews.length;i++){
-          target+=d*t.rews[i];d*=0.6}
+          target+=d*t.rews[i];d*=0.7}
         teachOne(brain,rec.ctx,target);
       }
     }
@@ -2411,7 +2414,10 @@ SCENARIOS.push({
     metric:{label:'Stack trouble / 25 pieces',unit:'pt',scale:1,
             winCount:12,winSec:20},
     challenges:[
-      {id:'host',label:'host skill',min:0,max:1,step:0.05,value:1,
+      /* default 50%: a full-strength 2-ply host plays near the ceiling and
+         leaves no visible learning story — the showcase wants both twins
+         starting mediocre and coral growing past gray */
+      {id:'host',label:'host skill',min:0,max:1,step:0.05,value:0.5,
        fmt:v=>(v*100).toFixed(0)+'%',apply:v=>{hostSkill=v}},
       {id:'preview',label:'preview ch.',min:0,max:1,step:1,value:1,
        fmt:v=>v?'on':'off',apply:v=>{previewOn=v>0}},
@@ -3970,7 +3976,8 @@ SCENARIOS.push({
 
 
 /* ============ harness ============ */
-let scen=null,brain=null,learning=false,paused=false,simMul=1,simT=0;
+/* start paused: set up challenges/speed/switch calmly, then hit Run */
+let scen=null,brain=null,learning=false,paused=true,simMul=1,simT=0;
 let ringP=null,ringB=null,chartData=[];
 function makeRing(N){return{b:new Float64Array(N),i:0,sum:0,fill:0,
   push(v){this.sum-=this.b[this.i];this.b[this.i]=v*v;this.sum+=v*v;
