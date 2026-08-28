@@ -2082,6 +2082,376 @@ SCENARIOS.push({
 })();
 
 (()=>{
+  // ================= TETRIS — the decision-mode skill probe =================
+  // Two boards, one shared 7-bag piece stream. Both twins place every piece
+  // with the same frozen linear afterstate heuristic ("the general
+  // algorithm"); the coral twin adds a learned score read to every candidate
+  // placement — and its context includes the NEXT piece, which a fixed
+  // one-piece heuristic cannot use. Teaching is outcome-only (lines cleared,
+  // deaths), 3-piece discounted credit taught once per record (findings
+  // 19/21), novelty exploration (finding 20), sticky host incumbent
+  // (finding 11). Byte-identical twins until the switch flips: the brain is
+  // read from t=0 but zero-init weights add exactly 0 to every candidate.
+  function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
+    let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+    return((t^t>>>14)>>>0)/4294967296}}
+  const DT=0.02, CYC=12, FALLT=CYC-2;  // 0.24 s per piece; lock 2 ticks early
+  const BW=10, BH=20;
+  const NAMES=['I','O','T','S','Z','J','L'];
+  /* host heuristic — set ONCE before the first bench run (Dellacherie /
+     El-Tetris spirit: Lee's four weights + a gentle max-well term), never
+     retuned against a result (protocol). agg = raw sum of column heights. */
+  const HW={lines:0.760666,agg:-0.510066,holes:-0.35663,bump:-0.184483,
+            well:-0.18};
+  const STICKY=0.15;   // incumbent margin vs estimate noise (finding 11)
+  const NOVW=0.5;      // novelty-bonus scale, count-decaying (finding 20)
+
+  const PIECES=(()=>{
+    const base={
+      I:[[0,0],[1,0],[2,0],[3,0]], O:[[0,0],[0,1],[1,0],[1,1]],
+      T:[[0,0],[1,0],[1,1],[2,0]], S:[[0,0],[1,0],[1,1],[2,1]],
+      Z:[[0,1],[1,0],[1,1],[2,0]], J:[[0,0],[0,1],[1,0],[2,0]],
+      L:[[0,0],[1,0],[2,0],[2,1]]};
+    function norm(cells){
+      const mx=Math.min(...cells.map(c=>c[0])),
+            my=Math.min(...cells.map(c=>c[1]));
+      return cells.map(([x,y])=>[x-mx,y-my])
+        .sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+    }
+    function rotCW(cells){return norm(cells.map(([x,y])=>[y,-x]))}
+    return NAMES.map(nm=>{
+      let cur=norm(base[nm]);
+      const rots=[],seen=new Set();
+      for(let k=0;k<4;k++){
+        const sig=JSON.stringify(cur);
+        if(!seen.has(sig)){
+          seen.add(sig);
+          const w=Math.max(...cur.map(c=>c[0]))+1,
+                h=Math.max(...cur.map(c=>c[1]))+1,
+                bot=new Array(w).fill(99);
+          for(const[x,y]of cur)if(y<bot[x])bot[x]=y;
+          rots.push({cells:cur,w,h,bot});
+        }
+        cur=rotCW(cur);
+      }
+      return{name:nm,rots};
+    });
+  })();
+
+  // ---- module state ----
+  let seqRng=null,garbRng=null,seq=[];
+  let hostSkill=1,previewOn=true,garbEvery=0;
+  let P=null,B=null,tickI=0,pieces=0;
+  const scratch=new Uint8Array(BW*BH);
+
+  function pieceAt(i){
+    while(seq.length<=i+1){          // +1: the preview channel needs next
+      const bag=[0,1,2,3,4,5,6];
+      for(let k=6;k>0;k--){const j=(seqRng()*(k+1))|0;
+        const t=bag[k];bag[k]=bag[j];bag[j]=t}
+      for(const v of bag)seq.push(v);
+    }
+    return seq[i];
+  }
+
+  function mkTwin(){return{grid:new Uint8Array(BW*BH),lines:0,deaths:0,
+    winLines:0,winDeaths:0,placeN:0,recs:[],rews:[],rewBase:0,
+    pend:null,anim:null,flashRows:null,flashT:0,deathT:0}}
+
+  // full afterstate scan: heights, holes, bumpiness, wells, transitions
+  function scanFeat(g){
+    const hh=[];let holes=0,agg=0,maxH=0;
+    for(let x=0;x<BW;x++){
+      let ht=0;
+      for(let y=BH-1;y>=0;y--)if(g[y*BW+x]){ht=y+1;break}
+      hh.push(ht);agg+=ht;if(ht>maxH)maxH=ht;
+      for(let y=0;y<ht;y++)if(!g[y*BW+x])holes++;
+    }
+    let bump=0;
+    for(let x=0;x<BW-1;x++)bump+=Math.abs(hh[x]-hh[x+1]);
+    let well=0;
+    for(let x=0;x<BW;x++){
+      const l=x>0?hh[x-1]:BH,r=x<BW-1?hh[x+1]:BH;
+      const d=Math.min(l,r)-hh[x];
+      if(d>well)well=d;
+    }
+    let rowT=0,colT=0;                 // side walls filled, floor filled,
+    for(let y=0;y<BH;y++){             // top boundary empty (El-Tetris)
+      let prev=1;
+      for(let x=0;x<BW;x++){const c=g[y*BW+x]?1:0;if(c!==prev)rowT++;prev=c}
+      if(prev!==1)rowT++;
+    }
+    for(let x=0;x<BW;x++){
+      let prev=1;
+      for(let y=0;y<BH;y++){const c=g[y*BW+x]?1:0;if(c!==prev)colT++;prev=c}
+      if(prev===1)colT++;
+    }
+    return{hh,holes,agg,bump,maxH,well,rowT,colT};
+  }
+
+  // hard-drop base row for rot at column x0 (row 0 = bottom)
+  function dropBase(hh,rot,x0){
+    let b=0;
+    for(let c=0;c<rot.w;c++){
+      const v=hh[x0+c]-rot.bot[c];
+      if(v>b)b=v;
+    }
+    return b;
+  }
+  // place rot on grid g (mutates); returns list of cleared row indices
+  function applyPlace(g,rot,x0,base){
+    for(const[cx,cy]of rot.cells)g[(base+cy)*BW+x0+cx]=1;
+    const cleared=[];
+    for(let y=base+rot.h-1;y>=base;y--){
+      let full=true;
+      for(let x=0;x<BW;x++)if(!g[y*BW+x]){full=false;break}
+      if(full){cleared.push(y);
+        g.copyWithin(y*BW,(y+1)*BW,BH*BW);
+        g.fill(0,(BH-1)*BW,BH*BW)}
+    }
+    return cleared;
+  }
+
+  // one candidate: simulate the drop, afterstate features, host score, ctx
+  function evalCand(g,hh,holes0,rot,x0,nxt){
+    const base=dropBase(hh,rot,x0);
+    if(base+rot.h>BH)return null;               // overflow: illegal
+    scratch.set(g);
+    const cleared=applyPlace(scratch,rot,x0,base).length;
+    const f=scanFeat(scratch);
+    const landH=base+(rot.h-1)/2;               // Dellacherie midpoint
+    const full=HW.lines*cleared+HW.agg*f.agg+HW.holes*f.holes
+      +HW.bump*f.bump+HW.well*f.well;
+    const host=hostSkill*full+(1-hostSkill)*(-landH);
+    /* afterstate context, raw values (the brain normalizes). The one-hot
+       NEXT-piece channels are the point: a fixed heuristic cannot condition
+       on the preview; the brain can (finding 15: context is where domain
+       knowledge lives). 17 live + 5 spare channels. */
+    const ctx=new Float64Array(22);
+    ctx[0]=landH;ctx[1]=cleared;ctx[2]=f.holes;ctx[3]=f.holes-holes0;
+    ctx[4]=f.bump;ctx[5]=f.agg/20;ctx[6]=f.well;ctx[7]=f.rowT;ctx[8]=f.colT;
+    ctx[9]=f.maxH>=16?1:0;                      // death-imminent flag
+    if(previewOn)ctx[10+nxt]=1;
+    return{rot,x0,base,cleared,host,ctx};
+  }
+
+  function teachOne(brain,ctx,target){
+    // finding 19 verbatim: delta = target − CURRENT prediction (fresh read)
+    const cur=brain.step(ctx,0,false)[0];
+    brain.step(ctx,target-cur,true);
+  }
+  // teach each record once when 3 pieces old: target = r0+0.6·r1+0.36·r2,
+  // outcome rewards only (finding 21: no one-step bootstrap)
+  function teachMature(t,brain){
+    while(t.recs.length&&t.placeN>=t.recs[0].k+3){
+      const rec=t.recs.shift(),i=rec.k-t.rewBase;
+      teachOne(brain,rec.ctx,
+        t.rews[i]+0.6*t.rews[i+1]+0.36*t.rews[i+2]);
+    }
+    const keepFrom=t.recs.length?t.recs[0].k:t.placeN;
+    while(t.rewBase<keepFrom&&t.rews.length){t.rews.shift();t.rewBase++}
+  }
+
+  // top-out: the −30 lands on the last placement, pending records get
+  // flush-taught with whatever reward is known, board resets, play goes on
+  function die(t,brain,learning){
+    t.deaths++;t.winDeaths++;t.deathT=CYC;
+    if(learning&&brain){
+      if(t.rews.length)t.rews[t.rews.length-1]-=30;
+      for(const rec of t.recs){
+        let target=0,d=1;
+        for(let i=rec.k-t.rewBase;i<t.rews.length;i++){
+          target+=d*t.rews[i];d*=0.6}
+        teachOne(brain,rec.ctx,target);
+      }
+    }
+    t.recs.length=0;t.rews.length=0;t.rewBase=t.placeN;
+    t.grid.fill(0);t.pend=null;t.anim=null;
+  }
+
+  // enumerate all hard-drop placements; choice = argmax(host + brain read)
+  function choose(t,brain,learning,pi){
+    const pc=PIECES[pieceAt(pi)],nxt=pieceAt(pi+1);
+    const f0=scanFeat(t.grid);
+    const cands=[];
+    for(const rot of pc.rots)
+      for(let x0=0;x0<=BW-rot.w;x0++){
+        const cd=evalCand(t.grid,f0.hh,f0.holes,rot,x0,nxt);
+        if(cd)cands.push(cd);
+      }
+    if(!cands.length)return null;               // no legal placement
+    let hb=0;
+    for(let i=1;i<cands.length;i++)if(cands[i].host>cands[hb].host)hb=i;
+    let bi=0,bs=-Infinity;
+    for(let i=0;i<cands.length;i++){
+      let s=cands[i].host+(i===hb?STICKY:0);
+      if(brain){
+        s+=brain.step(cands[i].ctx,0,false)[0];  // pure read per candidate
+        if(learning&&brain.noveltyBonus)s+=NOVW*brain.noveltyBonus(0);
+      }
+      if(s>bs){bs=s;bi=i}
+    }
+    return cands[bi];
+  }
+
+  function lockIn(t,brain,learning){
+    const cand=t.pend;t.pend=null;
+    const rows=applyPlace(t.grid,cand.rot,cand.x0,cand.base);
+    if(rows.length){t.flashRows=rows;t.flashT=8;
+      t.lines+=rows.length;t.winLines+=rows.length}
+    if(learning&&brain){
+      t.recs.push({ctx:cand.ctx,k:t.placeN});
+      if(t.recs.length>8)t.recs.shift();         // ring of last ~8
+      // outcome-based reward ONLY (board features in r would be rigging)
+      t.rews.push(3*rows.length*rows.length-0.05);
+    }
+    t.placeN++;
+  }
+
+  function addGarbage(t,hole,brain,learning){
+    for(let x=0;x<BW;x++)
+      if(t.grid[(BH-1)*BW+x]){die(t,brain||null,!!learning);return}
+    t.grid.copyWithin(BW,0,(BH-1)*BW);
+    for(let x=0;x<BW;x++)t.grid[x]=x===hole?0:1;
+  }
+
+  function drawBoard(g,x0,y0,cell,t,color,dpr,label){
+    const bw=cell*BW,bh=cell*BH;
+    g.fillStyle=C.panel2;g.fillRect(x0,y0,bw,bh);
+    g.strokeStyle=C.line;g.lineWidth=dpr;
+    g.strokeRect(x0,y0,bw,bh);
+    g.globalAlpha=0.22;g.beginPath();
+    for(let x=1;x<BW;x++){g.moveTo(x0+x*cell,y0);g.lineTo(x0+x*cell,y0+bh)}
+    for(let y=1;y<BH;y++){g.moveTo(x0,y0+y*cell);g.lineTo(x0+bw,y0+y*cell)}
+    g.stroke();g.globalAlpha=1;
+    g.fillStyle=color;g.globalAlpha=0.75;
+    for(let y=0;y<BH;y++)for(let x=0;x<BW;x++)
+      if(t.grid[y*BW+x])
+        g.fillRect(x0+x*cell+dpr*0.5,y0+(BH-1-y)*cell+dpr*0.5,
+                   cell-dpr,cell-dpr);
+    g.globalAlpha=1;
+    if(t.anim&&t.pend){                          // falling piece
+      const cand=t.anim.cand;
+      const u=Math.min(1,(tickI-t.anim.t0)/FALLT);
+      const yb=(BH+2)*(1-u)+cand.base*u;
+      g.save();g.beginPath();g.rect(x0,y0,bw,bh);g.clip();
+      g.shadowColor=color;g.shadowBlur=6*dpr;g.fillStyle=color;
+      for(const[cx,cy]of cand.rot.cells)
+        g.fillRect(x0+(cand.x0+cx)*cell+dpr*0.5,
+                   y0+(BH-1-(yb+cy))*cell+dpr*0.5,cell-dpr,cell-dpr);
+      g.restore();
+    }
+    if(t.flashT>0&&t.flashRows){                 // line-clear flash
+      g.fillStyle='#ffffff';g.globalAlpha=0.35*(t.flashT/8);
+      for(const y of t.flashRows)
+        g.fillRect(x0,y0+(BH-1-y)*cell,bw,cell);
+      g.globalAlpha=1;
+    }
+    if(t.deathT>0){                              // top-out flash
+      g.fillStyle='#ff5b5b';g.globalAlpha=0.45*(t.deathT/CYC);
+      g.fillRect(x0,y0,bw,bh);g.globalAlpha=1;
+      g.font='600 '+(13*dpr)+'px IBM Plex Sans';g.textAlign='center';
+      g.fillStyle='#ffd166';
+      g.fillText('TOP OUT',x0+bw/2,y0+bh*0.45);
+    }
+    g.font=(10*dpr)+'px IBM Plex Mono';g.textAlign='center';
+    g.fillStyle=C.muted;
+    g.fillText(label,x0+bw/2,y0-8*dpr);
+    g.fillText('lines '+t.lines+' · deaths '+t.deaths,
+      x0+bw/2,y0+bh+16*dpr);
+  }
+
+  window.__tetris={get P(){return P},get B(){return B},
+    get pieces(){return pieces}};
+
+  SCENARIOS.push({
+    id:'tetris',name:'Tetris',
+    blurb:'The hardest decision exhibit. Two boards, one shared piece stream, one frozen textbook placement heuristic on both. The coral board adds a learned score to every candidate placement — and its context can see the NEXT piece, which no fixed one-piece heuristic can use. Reward is outcomes only: lines cleared and top-outs.',
+    dt:DT,
+    brainCfg:{nCtx:22,nOut:1,authority:4,tauOut:0,dt:0.5,gate:false,
+              n0:320,tauElig:0.02,rbCap:256,v2:true},
+    metric:{label:'Stack trouble / 25 pieces',unit:'pt',scale:1,
+            winCount:12,winSec:20},
+    challenges:[
+      {id:'host',label:'host skill',min:0,max:1,step:0.05,value:1,
+       fmt:v=>(v*100).toFixed(0)+'%',apply:v=>{hostSkill=v}},
+      {id:'preview',label:'preview ch.',min:0,max:1,step:1,value:1,
+       fmt:v=>v?'on':'off',apply:v=>{previewOn=v>0}},
+      {id:'garbage',label:'garbage',min:0,max:20,step:5,value:0,
+       fmt:v=>v?('every '+v+' pc'):'off',apply:v=>{garbEvery=v}},
+    ],
+    init(){
+      seqRng=mulberry32(23+SEEDK());garbRng=mulberry32(43+SEEDK());
+      seq.length=0;P=mkTwin();B=mkTwin();tickI=0;pieces=0;
+    },
+    stats:()=>({pieces,linesP:P.lines,deathsP:P.deaths,
+      linesB:B.lines,deathsB:B.deaths}),
+    step(brain,learning){
+      const ph=tickI%CYC;let out=null;
+      if(P.flashT>0)P.flashT--;if(B.flashT>0)B.flashT--;
+      if(P.deathT>0)P.deathT--;if(B.deathT>0)B.deathT--;
+      if(ph===0){
+        P.pend=choose(P,null,false,pieces);
+        if(!P.pend)die(P,null,false);
+        // coral: teach matured records FIRST, then read+choose (finding 19:
+        // choices must use post-teach scores)
+        if(!learning&&(B.recs.length||B.rews.length)){
+          B.recs.length=0;B.rews.length=0;B.rewBase=B.placeN}
+        if(learning)teachMature(B,brain);
+        B.pend=choose(B,brain,learning,pieces);
+        if(!B.pend)die(B,brain,learning);
+        if(P.pend)P.anim={cand:P.pend,t0:tickI};
+        if(B.pend)B.anim={cand:B.pend,t0:tickI};
+      }else if(ph===FALLT){
+        if(P.pend)lockIn(P,null,false);
+        if(B.pend)lockIn(B,brain,learning);
+        pieces++;
+        if(garbEvery>0&&pieces%garbEvery===0){
+          const hole=(garbRng()*BW)|0;      // one draw, same row both twins
+          addGarbage(P,hole,null,false);
+          addGarbage(B,hole,brain,learning);
+        }
+        if(pieces%25===0){
+          /* shortfall clamped at 0: a window can clear >10 lines (stack
+             carried in from earlier windows) and the harness ring squares
+             values — unclamped, a 12-line window would score as badly as
+             an 8-line one */
+          const ep=Math.max(0,10-P.winLines)+20*P.winDeaths,
+                eb=Math.max(0,10-B.winLines)+20*B.winDeaths;
+          P.winLines=0;P.winDeaths=0;B.winLines=0;B.winDeaths=0;
+          // outcome wire (finding 31): the window cost the host already
+          // measures anchors the decision-mode harm watchdog
+          if(learning&&brain.outcome)brain.outcome(eb);
+          out={ep,eb};
+        }
+      }
+      tickI++;
+      return out;
+    },
+    draw(g,W,H){
+      if(!P||!B)return;
+      const dpr=devicePixelRatio||1;
+      const top=46*dpr,bot=34*dpr,side=20*dpr,gap=46*dpr;
+      const aw=(W-2*side-gap)/2,ah=H-top-bot;
+      const cell=Math.max(2,Math.min(aw/BW,ah/BH));
+      const bw=cell*BW,bh=cell*BH;
+      const y0=top+(ah-bh)/2;
+      g.font=(11*dpr)+'px IBM Plex Mono';g.textAlign='center';
+      g.fillStyle=C.muted;
+      g.fillText('piece '+pieces+' · next',W/2-26*dpr,26*dpr);
+      {const mc=5*dpr,rot=PIECES[pieceAt(pieces+1)].rots[0];
+       const ox=W/2+10*dpr,oy=30*dpr;
+       g.fillStyle=C.slow;
+       for(const[cx,cy]of rot.cells)
+         g.fillRect(ox+cx*mc,oy-(cy+1)*mc,mc-dpr,mc-dpr);}
+      drawBoard(g,side+(aw-bw)/2,y0,cell,P,C.plain,dpr,'the algorithm');
+      drawBoard(g,side+aw+gap+(aw-bw)/2,y0,cell,B,C.brain,dpr,
+        'algorithm + brain');
+    }
+  });
+})();
+
+(()=>{
   // ================= FIGHTER — neon tournament edition =================
   function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
     let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
@@ -3715,7 +4085,7 @@ function tick(now){
   requestAnimationFrame(tick)}
 
 /* tabs */
-{const ORDER=['balance','path','car','flight','rover','launcher','maze','fight','hive','gossip'];
+{const ORDER=['balance','path','car','flight','rover','launcher','maze','tetris','fight','hive','gossip'];
  SCENARIOS.sort((a,b)=>ORDER.indexOf(a.id)-ORDER.indexOf(b.id));
  const tabs=document.getElementById('tabs');
  for(const s of SCENARIOS){

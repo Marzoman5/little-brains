@@ -29,6 +29,8 @@ for (const sc of ['balance', 'path', 'car', 'flight', 'rover', 'launcher', 'maze
   for (const s of seeds)
     jobs.push({ fn: 'run', args: [sc, 240, { seed: s, brain: brainV }], tag: sc });
 for (const s of seeds)
+  jobs.push({ fn: 'runBlocks', args: ['tetris', 200, 3, { seed: s, brain: brainV }], tag: 'tetris' });
+for (const s of seeds)
   jobs.push({ fn: 'runBlocks', args: ['fight', 500, 3, { seed: s, brain: brainV }], tag: 'fight' });
 for (const s of seeds)
   jobs.push({ fn: 'runBlocks', args: ['hive', 200, 3, { seed: s, brain: brainV }], tag: 'hive' });
