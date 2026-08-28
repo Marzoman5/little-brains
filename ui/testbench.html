@@ -2227,11 +2227,16 @@ SCENARIOS.push({
        NEXT-piece channels are the point: a fixed heuristic cannot condition
        on the preview; the brain can (finding 15: context is where domain
        knowledge lives). 17 live + 5 spare channels. */
-    const ctx=new Float64Array(22);
+    const ctx=new Float64Array(30);
     ctx[0]=landH;ctx[1]=cleared;ctx[2]=f.holes;ctx[3]=f.holes-holes0;
     ctx[4]=f.bump;ctx[5]=f.agg/20;ctx[6]=f.well;ctx[7]=f.rowT;ctx[8]=f.colT;
     ctx[9]=f.maxH>=16?1:0;                      // death-imminent flag
     if(previewOn)ctx[10+nxt]=1;
+    /* the surface map itself (owner direction 2026-08-28): per-column
+       heights relative to the lowest column — summary stats alone hid
+       the shape the next piece has to fit */
+    let mn=f.hh[0];for(let x=1;x<BW;x++)if(f.hh[x]<mn)mn=f.hh[x];
+    for(let x=0;x<BW;x++)ctx[17+x]=(f.hh[x]-mn)/4;
     return{rot,x0,base,cleared,host,ctx};
   }
 
@@ -2258,7 +2263,7 @@ SCENARIOS.push({
   function die(t,brain,learning){
     t.deaths++;t.winDeaths++;t.deathT=CYC;
     if(learning&&brain){
-      if(t.rews.length)t.rews[t.rews.length-1]-=30;
+      if(t.rews.length)t.rews[t.rews.length-1]-=10;
       for(const rec of t.recs){
         let target=0,d=1;
         for(let i=rec.k-t.rewBase;i<t.rews.length;i++){
@@ -2310,8 +2315,11 @@ SCENARIOS.push({
         t.recs.length=0;t.rews.length=0;t.rewBase=t.placeN}
       t.recs.push({ctx:cand.ctx,k:t.placeN});
       if(t.recs.length>8)t.recs.shift();         // ring of last ~8
-      // outcome-based reward ONLY (board features in r would be rigging)
-      t.rews.push(3*rows.length*rows.length-0.05);
+      // outcome-based reward ONLY (board features in r would be rigging).
+      // Linear in lines and scaled to the output clamp: the 3*lines^2
+      // scale railed the value function at +clamp for every candidate
+      // (finding 38's saturation) and erased the ranking
+      t.rews.push(rows.length-0.02);
     }
     t.placeN++;
   }
@@ -2376,8 +2384,8 @@ SCENARIOS.push({
     id:'tetris',name:'Tetris',
     blurb:'The hardest decision exhibit. Two boards, one shared piece stream, one frozen textbook placement heuristic on both. The coral board adds a learned score to every candidate placement — and its context can see the NEXT piece, which no fixed one-piece heuristic can use. Reward is outcomes only: lines cleared and top-outs.',
     dt:DT,
-    brainCfg:{nCtx:22,nOut:1,authority:4,tauOut:0,dt:0.5,gate:false,
-              n0:320,tauElig:0.02,rbCap:256,v2:true},
+    brainCfg:{nCtx:30,nOut:1,authority:8,tauOut:0,dt:0.5,gate:false,
+              n0:512,tauElig:0.02,rbCap:256,v2:true},
     metric:{label:'Stack trouble / 25 pieces',unit:'pt',scale:1,
             winCount:12,winSec:20},
     challenges:[
